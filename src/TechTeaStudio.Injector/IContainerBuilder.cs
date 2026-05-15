@@ -1,0 +1,103 @@
+using System.Reflection;
+
+namespace TechTeaStudio.Injector;
+
+/// <summary>
+/// Fluent API used to register services before building an <see cref="IContainer"/>.
+/// </summary>
+public interface IContainerBuilder
+{
+    /// <summary>
+    /// Registers a concrete implementation type for the given service contract.
+    /// </summary>
+    /// <typeparam name="TService">Service contract.</typeparam>
+    /// <typeparam name="TImpl">Concrete implementation. Must be instantiable and assignable to <typeparamref name="TService"/>.</typeparam>
+    IRegistrationBuilder Register<TService, TImpl>()
+        where TImpl : class, TService
+        where TService : class;
+
+    /// <summary>
+    /// Registers a concrete type that doubles as its own service contract.
+    /// </summary>
+    /// <typeparam name="TService">Concrete type to register.</typeparam>
+    IRegistrationBuilder Register<TService>() where TService : class;
+
+    /// <summary>
+    /// Registers a factory delegate that produces instances of <typeparamref name="TService"/>.
+    /// The factory receives the active <see cref="IResolver"/> so it may pull in collaborators.
+    /// </summary>
+    /// <typeparam name="TService">Service contract.</typeparam>
+    /// <param name="factory">Factory delegate.</param>
+    IRegistrationBuilder Register<TService>(Func<IResolver, TService> factory) where TService : class;
+
+    /// <summary>
+    /// Registers an already-created instance under <typeparamref name="TService"/>; lifetime is
+    /// implicitly <see cref="Lifetime.Singleton"/> and the container will dispose the instance
+    /// if it implements <see cref="IDisposable"/>.
+    /// </summary>
+    /// <typeparam name="TService">Service contract.</typeparam>
+    /// <param name="instance">Pre-built instance.</param>
+    IRegistrationBuilder RegisterInstance<TService>(TService instance) where TService : class;
+
+    /// <summary>
+    /// Registers a decorator that wraps every existing registration of <typeparamref name="TService"/>.
+    /// Decorators are applied in registration order — the last registered decorator is outermost.
+    /// </summary>
+    /// <typeparam name="TService">Service contract being decorated.</typeparam>
+    /// <typeparam name="TDecorator">Decorator type. Must accept the service in its constructor.</typeparam>
+    IContainerBuilder RegisterDecorator<TService, TDecorator>()
+        where TDecorator : class, TService
+        where TService : class;
+
+    /// <summary>
+    /// Invokes <see cref="IModule.Register(IContainerBuilder)"/> on the supplied module.
+    /// </summary>
+    /// <param name="module">Module to install.</param>
+    IContainerBuilder RegisterModule(IModule module);
+
+    /// <summary>
+    /// Scans the supplied assembly for concrete, non-abstract, public types and registers each one
+    /// that satisfies <paramref name="filter"/> (or every such type when <paramref name="filter"/> is <c>null</c>).
+    /// Each discovered type is registered against itself and every interface it implements.
+    /// </summary>
+    /// <param name="asm">Assembly to scan.</param>
+    /// <param name="filter">Optional predicate that decides whether a candidate type is registered.</param>
+    /// <param name="lifetime">Lifetime for the registrations. Defaults to <see cref="Lifetime.Transient"/>.</param>
+    IContainerBuilder RegisterAssembly(Assembly asm, Predicate<Type>? filter = null, Lifetime lifetime = Lifetime.Transient);
+
+    /// <summary>
+    /// Compiles every registration and returns the built <see cref="IContainer"/>. The builder
+    /// must not be used after <see cref="Build"/> is called.
+    /// </summary>
+    IContainer Build();
+}
+
+/// <summary>
+/// Returned by every registration method on <see cref="IContainerBuilder"/>. Lets the caller pick
+/// a lifetime, name the registration, or attach a key (for <c>ResolveDictionary</c>).
+/// </summary>
+public interface IRegistrationBuilder
+{
+    /// <summary>Sets the registration's lifetime to <see cref="Lifetime.Transient"/>.</summary>
+    IRegistrationBuilder AsTransient();
+
+    /// <summary>Sets the registration's lifetime to <see cref="Lifetime.Scoped"/>.</summary>
+    IRegistrationBuilder AsScoped();
+
+    /// <summary>Sets the registration's lifetime to <see cref="Lifetime.Singleton"/>.</summary>
+    IRegistrationBuilder AsSingleton();
+
+    /// <summary>
+    /// Tags this registration with <paramref name="key"/> so it is reachable via
+    /// <see cref="IResolver.ResolveDictionary{TKey,T}"/>. Keys must be unique per service type.
+    /// </summary>
+    /// <param name="key">Lookup key.</param>
+    IRegistrationBuilder WithKey(object key);
+
+    /// <summary>
+    /// Registers the same registration under one or more additional service contracts.
+    /// Useful when an implementation satisfies multiple interfaces.
+    /// </summary>
+    /// <param name="additionalServiceTypes">Extra service contracts to bind.</param>
+    IRegistrationBuilder As(params Type[] additionalServiceTypes);
+}

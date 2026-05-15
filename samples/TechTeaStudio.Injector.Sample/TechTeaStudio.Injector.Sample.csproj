@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>TechTeaStudio.Injector.Sample</RootNamespace>
+    <AssemblyName>InjectorSample</AssemblyName>
+    <Version>0.1.0</Version>
+    <Description>Sample console app demonstrating TechTeaStudio.Injector usage.</Description>
+    <IsPackable>false</IsPackable>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\TechTeaStudio.Injector\TechTeaStudio.Injector.csproj" />
+  </ItemGroup>
+
+</Project>

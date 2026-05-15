@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Company>Tech Tea Studio</Company>
+    <Authors>Tech Tea Studio</Authors>
+    <Copyright>Copyright © Tech Tea Studio 2026</Copyright>
+    <RepositoryUrl>https://github.com/TechTeaStudio/Injector</RepositoryUrl>
+  </PropertyGroup>
+</Project>
