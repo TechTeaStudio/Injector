@@ -23,6 +23,23 @@ public interface IContainerBuilder
     IRegistrationBuilder Register<TService>() where TService : class;
 
     /// <summary>
+    /// Registers a concrete implementation type for the given service contract using runtime
+    /// <see cref="Type"/> references. Required for open-generic registrations such as
+    /// <c>Register(typeof(IRepository&lt;&gt;), typeof(Repository&lt;&gt;))</c>.
+    /// </summary>
+    /// <param name="serviceType">Service contract (may be an open generic type definition).</param>
+    /// <param name="implementationType">Concrete implementation (may be an open generic type definition).</param>
+    IRegistrationBuilder Register(Type serviceType, Type implementationType);
+
+    /// <summary>
+    /// Registers a concrete type that doubles as its own service contract using a runtime
+    /// <see cref="Type"/> reference. Required for open-generic self-registrations such as
+    /// <c>Register(typeof(Repository&lt;&gt;))</c>.
+    /// </summary>
+    /// <param name="serviceType">Concrete type to register (may be an open generic type definition).</param>
+    IRegistrationBuilder Register(Type serviceType);
+
+    /// <summary>
     /// Registers a factory delegate that produces instances of <typeparamref name="TService"/>.
     /// The factory receives the active <see cref="IResolver"/> so it may pull in collaborators.
     /// </summary>
@@ -67,9 +84,17 @@ public interface IContainerBuilder
 
     /// <summary>
     /// Compiles every registration and returns the built <see cref="IContainer"/>. The builder
-    /// must not be used after <see cref="Build"/> is called.
+    /// must not be used after <see cref="Build()"/> is called.
     /// </summary>
     IContainer Build();
+
+    /// <summary>
+    /// Compiles every registration and returns the built <see cref="IContainer"/>, applying the
+    /// supplied <paramref name="options"/>. The builder must not be used after this call.
+    /// </summary>
+    /// <param name="options">Build-time options. When <c>ValidateOnBuild</c> is true, every registration
+    /// is resolved into a throwaway scope and failures are aggregated into a single exception.</param>
+    IContainer Build(BuildOptions options);
 }
 
 /// <summary>
@@ -100,4 +125,19 @@ public interface IRegistrationBuilder
     /// </summary>
     /// <param name="additionalServiceTypes">Extra service contracts to bind.</param>
     IRegistrationBuilder As(params Type[] additionalServiceTypes);
+
+    /// <summary>
+    /// Adds a callback that runs immediately after the constructor returns, before property /
+    /// method injection. The callback receives the raw instance (cast to the implementation type
+    /// by the caller).
+    /// </summary>
+    /// <param name="callback">Hook invoked on the raw instance.</param>
+    IRegistrationBuilder OnActivating(Action<object> callback);
+
+    /// <summary>
+    /// Adds a callback that runs after property / method injection completes, immediately before
+    /// the resolver returns the instance to the caller.
+    /// </summary>
+    /// <param name="callback">Hook invoked on the fully-initialized instance.</param>
+    IRegistrationBuilder OnActivated(Action<object> callback);
 }

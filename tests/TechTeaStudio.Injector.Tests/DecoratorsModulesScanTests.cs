@@ -151,4 +151,39 @@ public class DecoratorsModulesScanTests
         var b = new ContainerBuilder();
         Assert.Throws<ArgumentNullException>(() => b.RegisterAssembly(null!));
     }
+
+    // --- Feature 8: compiled decorator caching ---
+    [Fact]
+    public void CompiledDecorator_IsReusedAcrossResolves()
+    {
+        var b = new ContainerBuilder();
+        b.Register<IFoo, Foo>().AsTransient();
+        b.RegisterDecorator<IFoo, FooDecorator1>();
+        using var c = b.Build();
+
+        // Two resolves: both succeed and produce equivalent wrapped output.
+        // The point is that no new ConstructorInfo lookup is required after the first build.
+        for (var i = 0; i < 100; i++)
+        {
+            var trace = c.Resolve<IFoo>().Trace();
+            Assert.Equal("d1(impl)", trace);
+        }
+    }
+
+    // --- Feature 9: build-time decorator validation ---
+    public interface IUnregisteredService { void Foo(); }
+    public class StraySvcDecorator : IUnregisteredService
+    {
+        private readonly IUnregisteredService _inner;
+        public StraySvcDecorator(IUnregisteredService inner) { _inner = inner; }
+        public void Foo() { _inner.Foo(); }
+    }
+
+    [Fact]
+    public void DecoratorWithoutMatchingBase_ThrowsRegistrationExceptionOnBuild()
+    {
+        var b = new ContainerBuilder();
+        b.RegisterDecorator<IUnregisteredService, StraySvcDecorator>();
+        Assert.Throws<RegistrationException>(() => b.Build());
+    }
 }

@@ -4,7 +4,7 @@
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <RootNamespace>TechTeaStudio.Injector</RootNamespace>
     <AssemblyName>TechTeaStudio.Injector</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Description>Lightweight, expression-tree-compiled dependency injection container with transient / scoped / singleton lifetimes, decorators, modules, assembly scanning, and constructor / property / method injection.</Description>
     <PackageId>TechTeaStudio.Injector</PackageId>
     <PackageTags>di;dependency-injection;ioc;container;injector;techteastudio</PackageTags>

@@ -36,6 +36,9 @@ internal sealed class Registration
     /// <summary>For decorator registrations: the decorator implementation type.</summary>
     public Type? DecoratorType { get; private set; }
 
+    /// <summary>True when <see cref="ServiceType"/> is an open generic type definition.</summary>
+    public bool IsOpenGeneric { get; private set; }
+
     private Registration(Type serviceType, Lifetime lifetime, int order)
     {
         ServiceType = serviceType;
@@ -45,7 +48,11 @@ internal sealed class Registration
 
     /// <summary>Constructs a type-based registration.</summary>
     public static Registration ForType(Type serviceType, Type implementationType, Lifetime lifetime, int order)
-        => new(serviceType, lifetime, order) { ImplementationType = implementationType };
+        => new(serviceType, lifetime, order)
+        {
+            ImplementationType = implementationType,
+            IsOpenGeneric = serviceType.IsGenericTypeDefinition,
+        };
 
     /// <summary>Constructs a factory-based registration.</summary>
     public static Registration ForFactory(Type serviceType, Func<IResolver, object> factory, Lifetime lifetime, int order)
@@ -64,4 +71,17 @@ internal sealed class Registration
 
     /// <summary>Sets the registration key.</summary>
     public Registration SetKey(object key) { Key = key; return this; }
+
+    /// <summary>Lifecycle hooks invoked before property/method injection (raw instance).</summary>
+    public List<Action<object>> OnActivatingHooks { get; } = new();
+
+    /// <summary>Lifecycle hooks invoked after property/method injection (final instance).</summary>
+    public List<Action<object>> OnActivatedHooks { get; } = new();
+
+    /// <summary>Copies lifecycle hook lists from another registration. Used when synthesizing closed-generic registrations.</summary>
+    public void CopyLifecycleHooksFrom(Registration other)
+    {
+        if (other.OnActivatingHooks.Count > 0) OnActivatingHooks.AddRange(other.OnActivatingHooks);
+        if (other.OnActivatedHooks.Count > 0) OnActivatedHooks.AddRange(other.OnActivatedHooks);
+    }
 }

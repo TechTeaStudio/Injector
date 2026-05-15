@@ -4,6 +4,8 @@
   </Folder>
   <Folder Name="/Tests/">
     <Project Path="tests/TechTeaStudio.Injector.Tests/TechTeaStudio.Injector.Tests.csproj" />
+    <Project Path="tests/TechTeaStudio.Injector.Extensions.DependencyInjection.Tests/TechTeaStudio.Injector.Extensions.DependencyInjection.Tests.csproj" />
   </Folder>
   <Project Path="src/TechTeaStudio.Injector/TechTeaStudio.Injector.csproj" />
+  <Project Path="src/TechTeaStudio.Injector.Extensions.DependencyInjection/TechTeaStudio.Injector.Extensions.DependencyInjection.csproj" />
 </Solution>

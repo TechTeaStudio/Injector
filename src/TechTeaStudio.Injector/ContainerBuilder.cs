@@ -4,7 +4,7 @@ namespace TechTeaStudio.Injector;
 
 /// <summary>
 /// Default in-memory implementation of <see cref="IContainerBuilder"/>. Collects registrations,
-/// then hands them off to the resolution engine when <see cref="Build"/> is called.
+/// then hands them off to the resolution engine when <see cref="Build()"/> is called.
 /// </summary>
 public sealed class ContainerBuilder : IContainerBuilder
 {
@@ -33,6 +33,31 @@ public sealed class ContainerBuilder : IContainerBuilder
         var reg = Registration.ForType(typeof(TService), typeof(TService), Lifetime.Transient, _orderCounter++);
         _registrations.Add(reg);
         return new RegistrationBuilder(this, reg);
+    }
+
+    /// <inheritdoc />
+    public IRegistrationBuilder Register(Type serviceType, Type implementationType)
+    {
+        if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
+        if (implementationType is null) throw new ArgumentNullException(nameof(implementationType));
+        EnsureNotBuilt();
+
+        if (serviceType.IsGenericTypeDefinition ^ implementationType.IsGenericTypeDefinition)
+        {
+            throw new RegistrationException(
+                $"Cannot register '{serviceType.FullName}' against '{implementationType.FullName}': both must be open generic type definitions, or neither.");
+        }
+
+        var reg = Registration.ForType(serviceType, implementationType, Lifetime.Transient, _orderCounter++);
+        _registrations.Add(reg);
+        return new RegistrationBuilder(this, reg);
+    }
+
+    /// <inheritdoc />
+    public IRegistrationBuilder Register(Type serviceType)
+    {
+        if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
+        return Register(serviceType, serviceType);
     }
 
     /// <inheritdoc />
@@ -104,12 +129,22 @@ public sealed class ContainerBuilder : IContainerBuilder
     }
 
     /// <inheritdoc />
-    public IContainer Build()
+    public IContainer Build() => Build(new BuildOptions());
+
+    /// <inheritdoc />
+    public IContainer Build(BuildOptions options)
     {
+        if (options is null) throw new ArgumentNullException(nameof(options));
         EnsureNotBuilt();
         ValidateKeys();
+        ValidateDecorators();
         _built = true;
-        return new Container(_registrations);
+        var container = new Container(_registrations);
+        if (options.ValidateOnBuild)
+        {
+            container.ValidateAllRegistrations();
+        }
+        return container;
     }
 
     private void EnsureNotBuilt()
@@ -129,6 +164,29 @@ public sealed class ContainerBuilder : IContainerBuilder
                 throw new RegistrationException(
                     $"Duplicate key '{reg.Key}' for service type '{reg.ServiceType.FullName}'.");
             }
+        }
+    }
+
+    private void ValidateDecorators()
+    {
+        // Each decorator must have at least one matching non-decorator registration for its service type.
+        // For open-generic service types, accept any matching open-generic OR a matching closed registration.
+        var nonDecoratorTypes = new HashSet<Type>();
+        foreach (var reg in _registrations)
+        {
+            if (reg.IsDecorator) continue;
+            nonDecoratorTypes.Add(reg.ServiceType);
+        }
+
+        foreach (var reg in _registrations)
+        {
+            if (!reg.IsDecorator) continue;
+            if (nonDecoratorTypes.Contains(reg.ServiceType)) continue;
+            // Allow open-generic decorators to be satisfied by an open-generic base.
+            if (reg.ServiceType.IsGenericTypeDefinition && nonDecoratorTypes.Contains(reg.ServiceType)) continue;
+
+            throw new RegistrationException(
+                $"Decorator for service type '{reg.ServiceType.FullName}' has no matching base registration.");
         }
     }
 
@@ -170,6 +228,20 @@ public sealed class ContainerBuilder : IContainerBuilder
                 if (_reg.Key is not null) alias.SetKey(_reg.Key);
                 _owner._registrations.Add(alias);
             }
+            return this;
+        }
+
+        public IRegistrationBuilder OnActivating(Action<object> callback)
+        {
+            if (callback is null) throw new ArgumentNullException(nameof(callback));
+            _reg.OnActivatingHooks.Add(callback);
+            return this;
+        }
+
+        public IRegistrationBuilder OnActivated(Action<object> callback)
+        {
+            if (callback is null) throw new ArgumentNullException(nameof(callback));
+            _reg.OnActivatedHooks.Add(callback);
             return this;
         }
     }

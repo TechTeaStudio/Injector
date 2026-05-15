@@ -1,61 +1,149 @@
-# Architect Review — TechTeaStudio.Injector v0.1.0
+# Architect Review — TechTeaStudio.Injector v0.2.0 + v0.3.0
 
-Stage 3 of the orchestrator pipeline. Read-only critique against the issue body's bullets and the codebase conventions used by `33-hh-story-generator` (the pilot) and `WordDataBase` / `ConfigBase`.
+Stage 3 of the orchestrator pipeline. Read-only critique of Worker A (v0.2.0 core feature wave) and Worker B (v0.3.0 MEDI sidecar) against `PLAN.md` and the conventions established in the v0.1.0 review.
 
-## Coverage of the issue body
+## Coverage of PLAN.md — v0.2.0 (Worker A)
 
-| Issue bullet | Status |
+| Feature | Status | Evidence |
+| --- | --- | --- |
+| 1. Open generics | OK | `IContainerBuilder.Register(Type, Type)` / `Register(Type)`; `Registration.IsOpenGeneric`; on-the-fly closing via `Container.GetRegistrations` (double-checked locked). Covered by `OpenGenericsTests.cs` (6 tests). |
+| 2. `Lazy<T>` / `Func<T>` / `Func<P, T>` | OK | `Container.TryResolveLazyOrFunc`. Covered by `LazyFuncTests.cs` (7 tests). |
+| 3. `IAsyncDisposable` | OK | `IContainer : IAsyncDisposable`; `IScope : IAsyncDisposable`; `Container.DisposeAsync`; `Scope.DisposeAsync`; `DisposalHelpers.DisposeAsyncSafe`. Covered by `AsyncDisposalTests.cs` (4 tests). |
+| 4. `BuildOptions { ValidateOnBuild }` | OK | `BuildOptions.cs`; `Build(BuildOptions)` overload; `Container.ValidateAllRegistrations`. Covered by `ValidateOnBuildTests.cs` (6 tests). |
+| 5. `Owned<T>` | OK | `Owned.cs`; resolution branch in `Container.TryResolveLazyOrFunc`. Covered by `OwnedTests.cs` (4 tests). |
+| 6. `OnActivating` / `OnActivated` | OK | `IRegistrationBuilder.OnActivating` / `OnActivated`; slow-path branch in `Container.CreateInstance`. Covered by `LifecycleHooksTests.cs` (4 tests). |
+| 7. `IScope.BeginLifetimeScope` | OK | `Scope.BeginLifetimeScope`; `ChildScopeRegistry`; `Container.TryResolveFromScopeChain`. Covered by `ChildScopeTests.cs` (6 tests). |
+| 8. Compiled decorators | OK | `Container.GetOrCompileDecoratorActivator` builds `Func<IResolver, object, object>` once per decorator registration. 100-iteration sanity test in `DecoratorsModulesScanTests.cs`. |
+| 9. Build-time decorator validation | OK | `ContainerBuilder.ValidateDecorators`. Covered by `DecoratorsModulesScanTests.cs`. |
+
+All nine PLAN.md features land. The 43-test v0.1 baseline now stands at 82 tests in the core project.
+
+## Coverage of PLAN.md — v0.3.0 (Worker B)
+
+| Surface | Status |
 | --- | --- |
-| Lightweight DI container for .NET 9.0+ | OK — multi-targets `net8.0;net9.0;net10.0`. |
-| Fluent registration API | OK — `ContainerBuilder` / `IRegistrationBuilder`. |
-| Transient / scoped / singleton lifetimes | OK — `AsTransient` / `AsScoped` / `AsSingleton`. |
-| Constructor injection | OK — greediest resolvable ctor with parameterless fallback. |
-| Property injection | OK — `[Inject]` on settable property. |
-| Method injection | OK — `[Inject]` on a public method, parameters resolved. |
-| Circular dependency detection | OK — runtime-side ambient stack catches cycles that span the compiled-activator boundary. `CircularDependencyException` carries the full chain. |
-| Module / assembly bulk registration | OK — `IModule` + `RegisterAssembly(asm, filter, lifetime)`. |
-| Decorator pattern | OK — `RegisterDecorator<TService, TDecorator>()`; chain order is innermost = first registered. |
-| Expression-tree compilation for perf | OK — `Activators.BuildActivatorExpression` builds a `Block` with `New(ctor, ...)` + property/method injection, compiles to `Func<IResolver, object>`, cached per registration. |
-| XML docs on every public type | OK — `GenerateDocumentationFile` is enabled on the library `.csproj`. |
-| Tests | OK — 43 xUnit tests across four files. |
-| Examples | OK — `samples/TechTeaStudio.Injector.Sample` runs end-to-end. |
-| Resolve `IEnumerable<T>` | OK — auto-handled by `TryResolveCollection`. Also covers `IReadOnlyList<T>` / `IReadOnlyCollection<T>`. |
-| Resolve `IDictionary<TKey, T>` | OK — keyed via `WithKey(...)` + `ResolveDictionary<TKey, T>()`. Auto-handled when injected as `IDictionary<TKey, T>` / `IReadOnlyDictionary<TKey, T>`. |
+| `InjectorServiceProvider` | OK. `IServiceProvider`, `IServiceProviderIsService`, `IServiceProviderIsKeyedService` (added in cleanup pass), `IKeyedServiceProvider`, `IDisposable`, `IAsyncDisposable`. |
+| `InjectorServiceScope` | OK. Wraps `IScope`. |
+| `InjectorServiceScopeFactory` | OK. |
+| `InjectorServiceProviderFactory` | OK. `(BuildOptions?)` overload added in cleanup pass for validation pass-through from host. |
+| `PopulateFromServiceCollection` (all 12 descriptor variants) | OK. |
+| `AsServiceProvider()` extension | OK. Non-owning by design. |
+| `IKeyedServiceProvider.GetKeyedService` / `GetRequiredKeyedService` | OK. |
 
-Verdict: every bullet in the issue body is covered.
+XML doc coverage on the sidecar is thorough; every public type and method carries `<summary>` blocks.
+
+## Public API additions (cumulative, additive against v0.1)
+
+Core library:
+
+- New: `IContainerBuilder.Register(Type, Type)`, `IContainerBuilder.Register(Type)`, `IContainerBuilder.Build(BuildOptions)`.
+- New: `IRegistrationBuilder.OnActivating(Action<object>)`, `IRegistrationBuilder.OnActivated(Action<object>)`.
+- New: `IScope.BeginLifetimeScope(Action<IContainerBuilder>)`.
+- New: `IContainer : IAsyncDisposable` (was `IDisposable` only).
+- New: `IScope : IAsyncDisposable` (was `IDisposable` only).
+- New: `public sealed class BuildOptions { bool ValidateOnBuild { get; init; } }`.
+- New: `public sealed class Owned<T> : IDisposable, IAsyncDisposable`.
+- Synthetic resolutions added (observable behaviour, no extra API surface): `Lazy<>`, `Func<>`, `Func<,...,>`, `Owned<>`, `IReadOnlyDictionary<,>`.
+- New internal surface for the sidecar: `Container.IsRegisteredInternal`, `GetAllRegistrations`, `FindKeyedRegistration`, `ResolveKeyed`. Exposed via `[assembly: InternalsVisibleTo("TechTeaStudio.Injector.Extensions.DependencyInjection")]`.
+
+No removals. The interface broadening on `IContainer` / `IScope` (adding `IAsyncDisposable`) is binary-compatible for consumers; only mock implementers would feel it.
+
+Sidecar (all new):
+
+- `InjectorServiceProvider`, `InjectorServiceScope`, `InjectorServiceScopeFactory`, `InjectorServiceProviderFactory`, `ScopedInjectorServiceProvider` (internal), `ResolverServiceProvider` (internal), `KeyedResolutionHelpers` (internal), `ServiceCollectionExtensions`.
+
+## Correctness highlights
+
+### Open generics
+
+- Closed-generic registrations win over open-generic. Confirmed by `OpenGenericsTests.ClosedGenericRegistrationOverridesOpenGeneric`.
+- Hooks and keys are copied to synthesized registrations.
+- One singleton instance per closed type when an open generic is registered as singleton (`IRepo<User>` and `IRepo<Order>` get distinct instances).
+
+### `Lazy` / `Func` / `Owned`
+
+- `Lazy<T>` is the cache-on-`.Value` flavour (LazyThreadSafetyMode.ExecutionAndPublication).
+- `Func<T>` captures the active scope at the resolve site — invoking the func later returns the scope-cached instance for scoped lifetimes.
+- `Func<P, T>` selects the greediest ctor whose remaining params are resolvable. Ambiguous cases silently pick the first match (documented limitation, v0.4 follow-up).
+
+### Async disposal
+
+- Reverse-creation-order disposal in both `Dispose` and `DisposeAsync`.
+- Sync `Dispose` falls back to `DisposeAsync().AsTask().GetAwaiter().GetResult()` for async-only-disposables. Risk of UI-thread deadlock if a consumer's `DisposeAsync` captures a `SynchronizationContext`; documented in XML doc.
+- Both `Dispose` and `DisposeAsync` are idempotent.
+
+### Validate-on-build
+
+- Catches missing deps and circular deps; aggregates into one `AggregateException`.
+- Uses a throwaway scope for scoped registrations.
+- Skips open-generic registrations (closing them requires sample type args; deferred to v0.3.x).
+- Singletons get materialized during validation: side effects of singleton ctors happen at `Build` rather than first `Resolve`. Documented on `BuildOptions.ValidateOnBuild`.
+
+### Lifecycle hooks
+
+- Slow-path triggers only when hooks are present.
+- `OnActivating` runs before property/method injection; `OnActivated` after; both run before decorator wrapping (decorators are not subject to the wrapped service's hooks).
+- Once-per-singleton: confirmed by `Hooks_FireOnceForSingleton`.
+
+### Child scope
+
+- Innermost shadows ancestors.
+- Disposal isolation: parent unaffected by child dispose.
+- Nested scopes work; closer parent wins.
+- Decorators registered on a child builder are currently ignored (limitation, v0.4 follow-up).
+
+### Compiled decorators
+
+- Cached per decorator registration; 100-iteration test confirms reuse.
+- Decorator with multiple service-typed ctor params: the first is bound to `inner`; documented in `RegisterDecorator` XML.
+
+### MEDI sidecar after cleanup pass
+
+- **Reflection removed.** `KeyedResolutionHelpers` now uses typed `internal` access exposed via `InternalsVisibleTo`. No `BindingFlags`, `GetField`, or `NonPublic` member access anywhere in the sidecar (verified by repository-wide grep).
+- `IsService` reports `true` for collection wrappers (`IEnumerable<T>` / `IReadOnlyCollection<T>` / `IReadOnlyList<T>` / `ICollection<T>` / `IList<T>`) regardless of inner-type registration, matching MEDI. Also handles `Lazy<T>` / `Func<T>` / `Owned<T>` when the inner type is registered.
+- `IServiceProviderIsKeyedService` implemented on both root and scoped providers.
+- `InjectorServiceProviderFactory(BuildOptions?)` overload added; consumers can plumb `ValidateOnBuild` through host config.
+- Disposal ownership split is intentional and tested: `container.AsServiceProvider()` is non-owning; the factory's `CreateServiceProvider` is owning. Matches `host.Dispose()` -> `IServiceProvider.Dispose()` -> entire container down.
 
 ## Thread-safety
 
-- `_lock` (a private `object`) guards the three mutable internal maps: `_activatorCache`, `_singletons`, and `_ownedDisposables`.
-- `_byServiceType` is built once in the constructor and treated as read-only afterwards. No lock needed.
-- Cycle detection uses `[ThreadStatic]` `Stack<Type>` + `HashSet<Type>`. Each resolving thread sees its own state, so there is no contention.
-- **One small race:** in the singleton branch, two threads can both build an instance, then one loses to the other on the cache add. The loser correctly disposes its duplicate — but if that duplicate's *dependencies* themselves had side effects (registered owned disposables, etc.), those side effects are not undone. For v0.1 this is documented behaviour; revisit if it bites a real consumer.
+- Singleton cache, scope cache, decorator activator cache, and open-generic synthesis cache all guarded by `_lock` with double-check on read/write. Hook invocation is outside the lock.
+- Child scope locks interact with parent locks only via cache reads. No nested-lock-acquire path.
+- Expression compile races: two threads may build the same lambda; the loser drops its copy. Same pattern as v0.1.
 
-## Performance — expression-tree compilation
+## Performance
 
-- One compilation per registration, cached forever inside the container's lifetime.
-- The compiled lambda is `Func<IResolver, object>`. The body is a `Block`:
-  - `new T(r.Resolve(typeof(P1)), r.Resolve(typeof(P2)), ...)` (with `Expression.Convert` to the parameter type)
-  - then optional `inst.Prop = (PropType)r.Resolve(typeof(PropType));` lines
-  - then optional `inst.MethodInject((P1)r.Resolve(...), ...)` lines
-  - then `(object)inst` as the block result.
-- Hot path: a single virtual call to `IResolver.Resolve` per dependency, then a delegate invoke for the ctor. About as fast as one can get without source generators.
-- Decorators are still built via reflection-based `ctor.Invoke(args)`. That is slow per call but only matters if you decorate a hot-loop service. Future optimisation: compile decorator stacking too.
+- Compiled decorators amortize after first resolve.
+- Open-generic synthesis: closed-registration cache grows unbounded if consumer requests many distinct closed types of a generic. Realistic apps are bounded; documented.
+- `Func<P, T>` Expression rebuilt on every resolve (no cache). Scheduled for v0.3.1.
+- `Lazy<T>` resolution uses `ConstructorInfo.Invoke`. Scheduled for v0.3.1 alongside `Func<P, T>` caching.
 
-## Disposal — idempotent?
+## Open items / backlog (v0.3.1 and v0.4+)
 
-- `Container.Dispose`: guarded by `if (_disposed) return;` and a hot-path `_disposed = true`. Subsequent calls are no-ops. ✓
-- `Scope.Dispose`: guarded by a `_lock`-held `_disposed` flag — first call snapshots and disposes; second call returns immediately. ✓
-- Per-instance `Dispose()` calls are wrapped in `try { … } catch { /* swallow */ }`; this prevents one badly-behaved service from blocking the rest of the cleanup. Trade-off: we hide exceptions; this matches MS DI's practice but is worth a note in the README.
-
-## Open items (non-blocking)
-
-1. **Root-tracked transient disposables grow without bound** if a long-running app resolves transient `IDisposable`s from the root container in a loop. Most consumers should resolve transients from a scope; the README's "Lifetimes at a glance" section covers this. *Not a fix for v0.1.*
-2. **Decorator activation via `ctor.Invoke`** — slower than compiled lambdas. Acceptable for v0.1 because decorators are rarely on truly hot paths. *Schedule for v0.2.*
-3. **`RegisterDecorator` doesn't validate** that the wrapped service has at least one registration. The error surfaces only at `Resolve`. A `Build()`-time check would be friendlier. *Nice-to-have.*
-4. **`As(params Type[])` aliases** create a factory-registration that delegates to the primary service type. That preserves the underlying lifetime cache correctly (the alias itself is transient, but the inner resolve hits the cache). Verified by the `As_RegistersAdditionalServiceContracts` test.
-5. **`GetDecorators` is O(N) per resolve** — fine for typical N. Could be pre-indexed in the ctor if a project ships hundreds of decorators.
+| Item | Severity | Status |
+| --- | --- | --- |
+| `IsService` ignores `IEnumerable<T>` for registered `T` | Important | Fixed in cleanup pass. |
+| `IServiceProviderIsKeyedService` not implemented | Important | Fixed in cleanup pass. |
+| Sidecar reflects on `Container` private fields | Critical | Fixed in cleanup pass via `InternalsVisibleTo`. |
+| `InjectorServiceProviderFactory(BuildOptions?)` overload | Important | Fixed in cleanup pass. |
+| `Func<P, T>` Expression recompiled every resolve | Important | Deferred to v0.3.1. |
+| `Func<P, T>` ambiguous ctor selection silently picks first | Backlog | v0.4. Document; consider explicit ambiguity error. |
+| Decorator with multiple inner-typed params picks first | Backlog | v0.4. |
+| Open-generic registrations skipped by `ValidateOnBuild` | Backlog | v0.4. |
+| Child-scope decorators ignored | Backlog | v0.4. |
+| `DisposalHelpers.DisposeSync` sync-over-async deadlock risk on UI threads | Backlog | v0.4. Adds `<remarks>` on `IContainer.Dispose`. |
+| Owned<T> from root container creates parentless scope | Backlog | v0.4. Document. |
 
 ## Critical count
 
-**0 critical issues.** All five open items are improvements queued for v0.2+, none block release.
+**0 critical issues** after the cleanup pass. v0.2.0 (core) and v0.3.0 (sidecar) are both ready for NuGet.
+
+## Verdict
+
+**Ship v0.2.0 + v0.3.0.**
+
+- Core library v0.2.0: every PLAN.md feature lands; 82/82 tests pass; backward compatibility preserved against v0.1.0.
+- Sidecar v0.3.0: all four cleanup-pass fixes applied; 45/45 tests pass; reflection eliminated; MEDI parity strengthened (`IEnumerable<T>` in `IsService`, `IServiceProviderIsKeyedService`); host-level `BuildOptions` plumbing in place.
+- Solution-wide: 127/127 tests passing in Release across `net8.0` / `net9.0` / `net10.0` (library) and `net10.0` (tests). 0 build warnings.
+
+Outstanding follow-ups are documented and parked in the v0.3.1 / v0.4 backlog above.

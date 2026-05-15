@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <RootNamespace>TechTeaStudio.Injector.Extensions.DependencyInjection</RootNamespace>
+    <AssemblyName>TechTeaStudio.Injector.Extensions.DependencyInjection</AssemblyName>
+    <Version>0.3.0</Version>
+    <Description>Microsoft.Extensions.DependencyInjection adapter for TechTeaStudio.Injector. Plugs the Injector container into ASP.NET Core / Generic Host / EF Core via IServiceProvider, IServiceScopeFactory, IServiceProviderFactory&lt;IContainerBuilder&gt;, and an IServiceCollection import helper.</Description>
+    <PackageId>TechTeaStudio.Injector.Extensions.DependencyInjection</PackageId>
+    <PackageTags>di;dependency-injection;ioc;container;injector;techteastudio;medi;aspnetcore;hosting</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TechTeaStudio.Injector\TechTeaStudio.Injector.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
+  </ItemGroup>
+
+</Project>

@@ -5,7 +5,7 @@ namespace TechTeaStudio.Injector;
 /// <see cref="IResolver"/>; transient and singleton services may be resolved directly from it,
 /// scoped services must be resolved from a <see cref="IScope"/> created via <see cref="CreateScope"/>.
 /// </summary>
-public interface IContainer : IResolver, IDisposable
+public interface IContainer : IResolver, IDisposable, IAsyncDisposable
 {
     /// <summary>Creates a fresh resolution scope.</summary>
     IScope CreateScope();

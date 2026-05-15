@@ -116,4 +116,22 @@ internal static class Activators
 
         return Expression.Block(typeof(object), new[] { instanceVar }, body);
     }
+
+    /// <summary>
+    /// Builds an expression that only invokes the chosen constructor with resolved dependencies —
+    /// no property or method injection. Used when lifecycle hooks must fire between construction
+    /// and post-construction injection.
+    /// </summary>
+    public static Expression BuildConstructorOnlyExpression(
+        Type implementationType,
+        ParameterExpression resolverParam,
+        Func<Type, Expression> resolveDependency,
+        Func<Type, bool> isResolvable)
+    {
+        var ctor = SelectConstructor(implementationType, isResolvable);
+        var ctorArgs = ctor.GetParameters()
+            .Select(p => (Expression)Expression.Convert(resolveDependency(p.ParameterType), p.ParameterType))
+            .ToArray();
+        return Expression.Convert(Expression.New(ctor, ctorArgs), typeof(object));
+    }
 }
