@@ -5,11 +5,47 @@
     <RootNamespace>TechTeaStudio.Injector</RootNamespace>
     <AssemblyName>TechTeaStudio.Injector</AssemblyName>
     <Version>0.2.0</Version>
-    <Description>Lightweight, expression-tree-compiled dependency injection container with transient / scoped / singleton lifetimes, decorators, modules, assembly scanning, and constructor / property / method injection.</Description>
+
+    <Description>Lightweight, expression-tree-compiled dependency injection container for .NET 8/9/10. From-scratch with no Microsoft.Extensions.DependencyInjection dependency. Open generics, decorators, Lazy/Func/Owned auto-resolution, lifecycle hooks (OnActivating / OnActivated), validate-on-build, async disposal, child scopes with extra registrations, modules, assembly scanning, keyed services, and IEnumerable / IReadOnlyDictionary collection injection.</Description>
     <PackageId>TechTeaStudio.Injector</PackageId>
-    <PackageTags>di;dependency-injection;ioc;container;injector;techteastudio</PackageTags>
+    <PackageTags>di;dependency-injection;ioc;container;injector;open-generics;decorators;lifecycle-hooks;techteastudio</PackageTags>
+
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <PackageProjectUrl>https://github.com/TechTeaStudio/Injector</PackageProjectUrl>
+    <RepositoryType>git</RepositoryType>
+
+    <PackageIcon>icon.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+
+    <PackageReleaseNotes>
+v0.2.0 — Major feature wave bringing Autofac-style feature parity to the core container.
+
+Added:
+  * Open generics: builder.Register(typeof(IRepo&lt;&gt;), typeof(Repo&lt;&gt;)) with on-demand closing.
+  * Lazy&lt;T&gt; / Func&lt;T&gt; / Func&lt;P, T&gt; auto-resolution; no registration needed.
+  * IAsyncDisposable on IContainer and IScope.
+  * Validate-on-build: builder.Build(new BuildOptions { ValidateOnBuild = true }).
+  * Owned&lt;T&gt; ownership transfer.
+  * OnActivating / OnActivated lifecycle hooks.
+  * Child scopes with extra registrations: scope.BeginLifetimeScope(b =&gt; ...).
+  * Compiled decorator activators (Expression-tree, cached per registration).
+  * Build-time decorator validation.
+
+For ASP.NET Core / Generic Host integration use the TechTeaStudio.Injector.Extensions.DependencyInjection sidecar package.
+
+Full changelog: https://github.com/TechTeaStudio/Injector/blob/product/CHANGELOG.md
+    </PackageReleaseNotes>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\icon.png"     Pack="true" PackagePath="\" />
+    <None Include="..\..\README.md"    Pack="true" PackagePath="\" />
+    <None Include="..\..\CHANGELOG.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\LICENSE.txt"  Pack="true" PackagePath="\" />
+  </ItemGroup>
 
 </Project>

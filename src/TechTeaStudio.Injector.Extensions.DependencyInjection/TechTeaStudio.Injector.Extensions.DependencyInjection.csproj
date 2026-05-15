@@ -5,11 +5,38 @@
     <RootNamespace>TechTeaStudio.Injector.Extensions.DependencyInjection</RootNamespace>
     <AssemblyName>TechTeaStudio.Injector.Extensions.DependencyInjection</AssemblyName>
     <Version>0.3.0</Version>
-    <Description>Microsoft.Extensions.DependencyInjection adapter for TechTeaStudio.Injector. Plugs the Injector container into ASP.NET Core / Generic Host / EF Core via IServiceProvider, IServiceScopeFactory, IServiceProviderFactory&lt;IContainerBuilder&gt;, and an IServiceCollection import helper.</Description>
+
+    <Description>Microsoft.Extensions.DependencyInjection adapter for TechTeaStudio.Injector. Plugs the Injector container into ASP.NET Core / Generic Host / EF Core via IServiceProvider, IServiceScope, IServiceScopeFactory, IServiceProviderFactory&lt;IContainerBuilder&gt;, IServiceProviderIsService, IServiceProviderIsKeyedService, IKeyedServiceProvider, and an IServiceCollection import helper.</Description>
     <PackageId>TechTeaStudio.Injector.Extensions.DependencyInjection</PackageId>
-    <PackageTags>di;dependency-injection;ioc;container;injector;techteastudio;medi;aspnetcore;hosting</PackageTags>
+    <PackageTags>di;dependency-injection;ioc;container;injector;techteastudio;medi;aspnetcore;hosting;keyed-services</PackageTags>
+
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <PackageProjectUrl>https://github.com/TechTeaStudio/Injector</PackageProjectUrl>
+    <RepositoryType>git</RepositoryType>
+
+    <PackageIcon>icon.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+
+    <PackageReleaseNotes>
+v0.3.0 — Microsoft.Extensions.DependencyInjection adapter for TechTeaStudio.Injector.
+
+Adapters:
+  * InjectorServiceProvider (IServiceProvider, IServiceProviderIsService, IServiceProviderIsKeyedService, IKeyedServiceProvider, IDisposable, IAsyncDisposable).
+  * InjectorServiceScope / InjectorServiceScopeFactory.
+  * InjectorServiceProviderFactory&lt;IContainerBuilder&gt; for hostBuilder.UseServiceProviderFactory(...).
+
+Helpers:
+  * IContainerBuilder.PopulateFromServiceCollection(IServiceCollection) — round-trips every ServiceDescriptor variant including .NET 8+ keyed services.
+  * IContainer.AsServiceProvider() — convenience non-owning adapter.
+
+IsService recognizes IEnumerable&lt;T&gt;, IReadOnlyCollection&lt;T&gt;, IReadOnlyList&lt;T&gt;, ICollection&lt;T&gt;, IList&lt;T&gt;, Lazy&lt;T&gt;, Func&lt;T&gt;, and Owned&lt;T&gt; when the inner type is registered.
+
+Full changelog: https://github.com/TechTeaStudio/Injector/blob/product/CHANGELOG.md
+    </PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,6 +45,13 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\icon.png"     Pack="true" PackagePath="\" />
+    <None Include="..\..\README.md"    Pack="true" PackagePath="\" />
+    <None Include="..\..\CHANGELOG.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\LICENSE.txt"  Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>
