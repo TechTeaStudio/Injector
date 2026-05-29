@@ -86,6 +86,33 @@ public class DecoratorsModulesScanTests
         Assert.Equal("init-called", inst.CapturedExtra);
     }
 
+    // Non-public method injection (parity with non-public property injection).
+    public class NeedsNonPublicMethodInjection
+    {
+        public ILog? CapturedLog { get; private set; }
+        public bool NonPublicInitCalled { get; private set; }
+
+        [Inject]
+        private void Init(ILog log)
+        {
+            CapturedLog = log;
+            NonPublicInitCalled = true;
+        }
+    }
+
+    [Fact]
+    public void MethodInjection_InvokesNonPublicAttributedMethod()
+    {
+        var b = new ContainerBuilder();
+        b.Register<ILog, TestLog>().AsSingleton();
+        b.Register<NeedsNonPublicMethodInjection>();
+        using var c = b.Build();
+        var inst = c.Resolve<NeedsNonPublicMethodInjection>();
+        Assert.True(inst.NonPublicInitCalled);
+        Assert.NotNull(inst.CapturedLog);
+        Assert.Equal("test", inst.CapturedLog!.Tag);
+    }
+
     // Modules
     public class FooModule : IModule
     {
