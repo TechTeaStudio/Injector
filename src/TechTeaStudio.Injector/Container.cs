@@ -93,6 +93,170 @@ public sealed class Container : IContainer
     public IDictionary<TKey, T> ResolveDictionary<TKey, T>() where TKey : notnull
         => ResolveDictionaryInternal<TKey, T>(scope: null);
 
+    // --- Public keyed resolution (delegates to the internal ResolveKeyed(Type, object, Scope?)). ---
+
+    /// <inheritdoc />
+    public T ResolveKeyed<T>(object key) => (T)ResolveKeyed(typeof(T), key);
+
+    /// <inheritdoc />
+    public object ResolveKeyed(Type serviceType, object key) => ResolveKeyedOrThrow(serviceType, key, scope: null);
+
+    /// <inheritdoc />
+    public bool TryResolveKeyed<T>(object key, out T value)
+    {
+        if (TryResolveKeyedInternal(typeof(T), key, scope: null, out var resolved))
+        {
+            value = (T)resolved!;
+            return true;
+        }
+        value = default!;
+        return false;
+    }
+
+    // --- Non-throwing / optional resolution. ---
+
+    /// <inheritdoc />
+    public bool TryResolve<T>(out T value)
+    {
+        if (TryResolveInternal(typeof(T), scope: null, out var resolved))
+        {
+            value = (T)resolved!;
+            return true;
+        }
+        value = default!;
+        return false;
+    }
+
+    /// <inheritdoc />
+    public bool TryResolve(Type serviceType, out object? value)
+        => TryResolveInternal(serviceType, scope: null, out value);
+
+    /// <inheritdoc />
+    public T? ResolveOptional<T>()
+        => TryResolveInternal(typeof(T), scope: null, out var resolved) ? (T?)resolved : default;
+
+    /// <inheritdoc />
+    public object? ResolveOptional(Type serviceType)
+        => TryResolveInternal(serviceType, scope: null, out var resolved) ? resolved : null;
+
+    // --- Public registration probe (delegates to IsRegisteredInternal). ---
+
+    /// <inheritdoc />
+    public bool IsRegistered<T>() => IsRegisteredInternal(typeof(T));
+
+    /// <inheritdoc />
+    public bool IsRegistered(Type serviceType) => IsRegisteredInternal(serviceType);
+
+    /// <summary>
+    /// Shared keyed-resolve-or-throw used by both the container root and scopes. Delegates to the
+    /// internal <see cref="ResolveKeyed(Type, object, Scope?)"/> and converts a <c>null</c> miss
+    /// into a descriptive exception that names the key.
+    /// </summary>
+    internal object ResolveKeyedOrThrow(Type serviceType, object key, Scope? scope)
+    {
+        if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
+        if (key is null) throw new ArgumentNullException(nameof(key));
+        var resolved = ResolveKeyed(serviceType, key, scope);
+        if (resolved is null)
+        {
+            throw new ServiceNotRegisteredException(serviceType);
+        }
+        return resolved;
+    }
+
+    /// <summary>
+    /// Shared keyed try-resolve used by both the container root and scopes. Returns <c>false</c> only
+    /// when no keyed registration matches; a genuine construction failure still propagates.
+    /// </summary>
+    internal bool TryResolveKeyedInternal(Type serviceType, object key, Scope? scope, out object? value)
+    {
+        if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
+        if (key is null) throw new ArgumentNullException(nameof(key));
+        // FindKeyedRegistration is the same lookup ResolveKeyed performs; checking first keeps a
+        // genuine activation failure (thrown by Activate) propagating instead of being swallowed.
+        if (FindKeyedRegistration(serviceType, key) is null)
+        {
+            value = null;
+            return false;
+        }
+        value = ResolveKeyed(serviceType, key, scope);
+        return true;
+    }
+
+    /// <summary>
+    /// Shared non-throwing resolve used by both the container root and scopes. Returns <c>false</c>
+    /// only when the top-level <paramref name="serviceType"/> is not resolvable at all (no
+    /// registration, not a synthetic Lazy/Func/Owned/collection, not a built-in resolver service).
+    /// When the service IS resolvable but its construction fails, the exception propagates.
+    /// </summary>
+    internal bool TryResolveInternal(Type serviceType, Scope? scope, out object? value)
+    {
+        EnsureNotDisposed();
+        if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
+        if (!CanResolveTopLevel(serviceType, scope))
+        {
+            value = null;
+            return false;
+        }
+        value = ResolveInternal(serviceType, scope);
+        return true;
+    }
+
+    /// <summary>
+    /// Mirrors the conditions under which <see cref="ResolveInternal"/> would throw
+    /// <see cref="ServiceNotRegisteredException"/> for the top-level type: returns <c>true</c> when a
+    /// registration exists (closed or open-generic), when the type is a built-in collection /
+    /// Lazy / Func / Owned synthetic, when a scope in the chain carries an extra registration, or when
+    /// the type is one of the ambient resolver services. This is a check-then-resolve guard so that
+    /// genuine downstream resolution failures are never swallowed.
+    /// </summary>
+    private bool CanResolveTopLevel(Type serviceType, Scope? scope)
+    {
+        // Registered directly (closed) or via an open-generic definition.
+        if (IsRegisteredInternal(serviceType)) return true;
+
+        // Ambient resolver services that ResolveInternal hands back without a registration.
+        if (serviceType == typeof(IResolver) || serviceType == typeof(IScope) || serviceType == typeof(IContainer))
+        {
+            return true;
+        }
+
+        // A child scope in the chain may carry an extra registration for this type.
+        if (scope is not null && ScopeChainHas(serviceType, scope)) return true;
+
+        // Built-in collection / synthetic generic support (IEnumerable<>, IReadOnly*, IDictionary<>,
+        // Lazy<>, Func<...>, Owned<>) — these always resolve even with zero user registrations.
+        if (serviceType.IsGenericType)
+        {
+            var def = serviceType.GetGenericTypeDefinition();
+            if (def == typeof(IEnumerable<>) || def == typeof(IReadOnlyCollection<>) || def == typeof(IReadOnlyList<>)
+                || def == typeof(IDictionary<,>) || def == typeof(IReadOnlyDictionary<,>)
+                || def == typeof(Lazy<>)
+                || def == typeof(Owned<>)
+                || (def.FullName is { } name && name.StartsWith("System.Func`", StringComparison.Ordinal)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when any scope in the chain rooted at <paramref name="scope"/> carries an
+    /// extra (child-only) registration for <paramref name="serviceType"/> — closed or open-generic.
+    /// </summary>
+    private static bool ScopeChainHas(Type serviceType, Scope scope)
+    {
+        Scope? current = scope;
+        while (current is not null)
+        {
+            if (current.Extra is { } extra && extra.HasAnyRegistrationsFor(serviceType)) return true;
+            current = current.Parent;
+        }
+        return false;
+    }
+
     internal object ResolveInternal(Type serviceType, Scope? scope)
     {
         EnsureNotDisposed();
