@@ -85,12 +85,14 @@ internal static class Activators
     }
 
     /// <summary>
-    /// Enumerates public instance methods marked with <see cref="InjectAttribute"/>.
+    /// Enumerates instance methods (public or non-public) marked with <see cref="InjectAttribute"/>.
+    /// Mirrors <see cref="GetInjectableProperties"/>, which also includes non-public members, so a
+    /// private/protected <c>[Inject]</c> method is invoked just like a private/protected property.
     /// </summary>
     [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public static IEnumerable<MethodInfo> GetInjectableMethods(Type t)
     {
-        foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+        foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
         {
             if (m.GetCustomAttribute<InjectAttribute>() is null) continue;
             if (m.IsSpecialName) continue; // skip property accessors

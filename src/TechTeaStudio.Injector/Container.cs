@@ -124,6 +124,190 @@ public sealed class Container : IContainer
     public IDictionary<TKey, T> ResolveDictionary<TKey, T>() where TKey : notnull
         => ResolveDictionaryInternal<TKey, T>(scope: null);
 
+    // --- Public keyed resolution (delegates to the internal ResolveKeyed(Type, object, Scope?)). ---
+
+    /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    public T ResolveKeyed<T>(object key) => (T)ResolveKeyed(typeof(T), key);
+
+    /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    public object ResolveKeyed(Type serviceType, object key) => ResolveKeyedOrThrow(serviceType, key, scope: null);
+
+    /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    public bool TryResolveKeyed<T>(object key, out T value)
+    {
+        if (TryResolveKeyedInternal(typeof(T), key, scope: null, out var resolved))
+        {
+            value = (T)resolved!;
+            return true;
+        }
+        value = default!;
+        return false;
+    }
+
+    // --- Non-throwing / optional resolution. ---
+
+    /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    public bool TryResolve<T>(out T value)
+    {
+        if (TryResolveInternal(typeof(T), scope: null, out var resolved))
+        {
+            value = (T)resolved!;
+            return true;
+        }
+        value = default!;
+        return false;
+    }
+
+    /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    public bool TryResolve(Type serviceType, out object? value)
+        => TryResolveInternal(serviceType, scope: null, out value);
+
+    /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    public T? ResolveOptional<T>()
+        => TryResolveInternal(typeof(T), scope: null, out var resolved) ? (T?)resolved : default;
+
+    /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    public object? ResolveOptional(Type serviceType)
+        => TryResolveInternal(serviceType, scope: null, out var resolved) ? resolved : null;
+
+    // --- Public registration probe (delegates to IsRegisteredInternal). ---
+
+    /// <inheritdoc />
+    public bool IsRegistered<T>() => IsRegisteredInternal(typeof(T));
+
+    /// <inheritdoc />
+    public bool IsRegistered(Type serviceType) => IsRegisteredInternal(serviceType);
+
+    /// <summary>
+    /// Shared keyed-resolve-or-throw used by both the container root and scopes. Delegates to the
+    /// internal <see cref="ResolveKeyed(Type, object, Scope?)"/> and converts a <c>null</c> miss
+    /// into a descriptive exception that names the key.
+    /// </summary>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    internal object ResolveKeyedOrThrow(Type serviceType, object key, Scope? scope)
+    {
+        if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
+        if (key is null) throw new ArgumentNullException(nameof(key));
+        var resolved = ResolveKeyed(serviceType, key, scope);
+        if (resolved is null)
+        {
+            throw new ServiceNotRegisteredException(serviceType);
+        }
+        return resolved;
+    }
+
+    /// <summary>
+    /// Shared keyed try-resolve used by both the container root and scopes. Returns <c>false</c> only
+    /// when no keyed registration matches; a genuine construction failure still propagates.
+    /// </summary>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    internal bool TryResolveKeyedInternal(Type serviceType, object key, Scope? scope, out object? value)
+    {
+        if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
+        if (key is null) throw new ArgumentNullException(nameof(key));
+        // FindKeyedRegistration is the same lookup ResolveKeyed performs; checking first keeps a
+        // genuine activation failure (thrown by Activate) propagating instead of being swallowed.
+        if (FindKeyedRegistration(serviceType, key) is null)
+        {
+            value = null;
+            return false;
+        }
+        value = ResolveKeyed(serviceType, key, scope);
+        return true;
+    }
+
+    /// <summary>
+    /// Shared non-throwing resolve used by both the container root and scopes. Returns <c>false</c>
+    /// only when the top-level <paramref name="serviceType"/> is not resolvable at all (no
+    /// registration, not a synthetic Lazy/Func/Owned/collection, not a built-in resolver service).
+    /// When the service IS resolvable but its construction fails, the exception propagates.
+    /// </summary>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    internal bool TryResolveInternal(Type serviceType, Scope? scope, out object? value)
+    {
+        EnsureNotDisposed();
+        if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
+        if (!CanResolveTopLevel(serviceType, scope))
+        {
+            value = null;
+            return false;
+        }
+        value = ResolveInternal(serviceType, scope);
+        return true;
+    }
+
+    /// <summary>
+    /// Mirrors the conditions under which <see cref="ResolveInternal"/> would throw
+    /// <see cref="ServiceNotRegisteredException"/> for the top-level type: returns <c>true</c> when a
+    /// registration exists (closed or open-generic), when the type is a built-in collection /
+    /// Lazy / Func / Owned synthetic, when a scope in the chain carries an extra registration, or when
+    /// the type is one of the ambient resolver services. This is a check-then-resolve guard so that
+    /// genuine downstream resolution failures are never swallowed.
+    /// </summary>
+    private bool CanResolveTopLevel(Type serviceType, Scope? scope)
+    {
+        // Registered directly (closed) or via an open-generic definition.
+        if (IsRegisteredInternal(serviceType)) return true;
+
+        // Ambient resolver services that ResolveInternal hands back without a registration.
+        if (serviceType == typeof(IResolver) || serviceType == typeof(IScope) || serviceType == typeof(IContainer))
+        {
+            return true;
+        }
+
+        // A child scope in the chain may carry an extra registration for this type.
+        if (scope is not null && ScopeChainHas(serviceType, scope)) return true;
+
+        // Built-in collection / synthetic generic support (IEnumerable<>, IReadOnly*, IDictionary<>,
+        // Lazy<>, Func<...>, Owned<>) — these always resolve even with zero user registrations.
+        if (serviceType.IsGenericType)
+        {
+            var def = serviceType.GetGenericTypeDefinition();
+            if (def == typeof(IEnumerable<>) || def == typeof(IReadOnlyCollection<>) || def == typeof(IReadOnlyList<>)
+                || def == typeof(IDictionary<,>) || def == typeof(IReadOnlyDictionary<,>)
+                || def == typeof(Lazy<>)
+                || def == typeof(Owned<>)
+                || (def.FullName is { } name && name.StartsWith("System.Func`", StringComparison.Ordinal)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when any scope in the chain rooted at <paramref name="scope"/> carries an
+    /// extra (child-only) registration for <paramref name="serviceType"/> — closed or open-generic.
+    /// </summary>
+    private static bool ScopeChainHas(Type serviceType, Scope scope)
+    {
+        Scope? current = scope;
+        while (current is not null)
+        {
+            if (current.Extra is { } extra && extra.HasAnyRegistrationsFor(serviceType)) return true;
+            current = current.Parent;
+        }
+        return false;
+    }
+
     [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
     [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     internal object ResolveInternal(Type serviceType, Scope? scope)
@@ -628,14 +812,77 @@ public sealed class Container : IContainer
         return new List<Registration>();
     }
 
+    // Pre-indexed decorator lookup, built once (lazily, thread-safe) from _registrations. Closed
+    // decorators are keyed by their exact ServiceType; open-generic decorators by their generic type
+    // definition. Replaces the former O(n) scan of _registrations on every activation with an O(1)
+    // dictionary probe. Built lazily (via LazyInitializer) so the whole feature stays inside the
+    // decorator subsystem and never touches the shared constructor / field block.
+    private DecoratorIndex? _decoratorIndex;
+    private object _decoratorIndexLock = new();
+
+    /// <summary>
+    /// Returns the decorators that apply to <paramref name="serviceType"/>, in registration order.
+    /// A closed service type picks up decorators registered on the exact type plus any registered on
+    /// the matching open-generic definition (so a decorator on <c>IRepository&lt;&gt;</c> wraps a
+    /// resolved <c>IRepository&lt;User&gt;</c>). The merge preserves declaration order across both
+    /// kinds so the decorator chain (innermost-first) is deterministic.
+    /// </summary>
     private List<Registration> GetDecorators(Type serviceType)
     {
-        var list = new List<Registration>();
-        foreach (var reg in _registrations)
+        var index = System.Threading.LazyInitializer.EnsureInitialized(
+            ref _decoratorIndex, ref _decoratorIndexLock, () => new DecoratorIndex(_registrations))!;
+        var closed = index.GetClosed(serviceType);
+
+        if (!serviceType.IsConstructedGenericType)
         {
-            if (reg.IsDecorator && reg.ServiceType == serviceType) list.Add(reg);
+            return closed.Count == 0 ? EmptyDecorators : closed;
         }
-        return list;
+
+        var open = index.GetOpen(serviceType.GetGenericTypeDefinition());
+        if (open.Count == 0) return closed.Count == 0 ? EmptyDecorators : closed;
+        if (closed.Count == 0) return open;
+
+        // Merge closed + open decorators, ordered by registration Order so chaining is deterministic.
+        var merged = new List<Registration>(closed.Count + open.Count);
+        merged.AddRange(closed);
+        merged.AddRange(open);
+        merged.Sort(static (a, b) => a.Order.CompareTo(b.Order));
+        return merged;
+    }
+
+    private static readonly List<Registration> EmptyDecorators = new();
+
+    /// <summary>
+    /// Immutable, build-once lookup of decorator registrations split into closed (keyed by exact
+    /// service type) and open-generic (keyed by generic type definition) buckets, each kept in
+    /// registration order.
+    /// </summary>
+    private sealed class DecoratorIndex
+    {
+        private static readonly List<Registration> Empty = new();
+        private readonly Dictionary<Type, List<Registration>> _closed = new();
+        private readonly Dictionary<Type, List<Registration>> _open = new();
+
+        public DecoratorIndex(IEnumerable<Registration> registrations)
+        {
+            foreach (var reg in registrations)
+            {
+                if (!reg.IsDecorator) continue;
+                var bucket = reg.ServiceType.IsGenericTypeDefinition ? _open : _closed;
+                if (!bucket.TryGetValue(reg.ServiceType, out var list))
+                {
+                    list = new List<Registration>();
+                    bucket[reg.ServiceType] = list;
+                }
+                list.Add(reg);
+            }
+        }
+
+        public List<Registration> GetClosed(Type serviceType)
+            => _closed.TryGetValue(serviceType, out var list) ? list : Empty;
+
+        public List<Registration> GetOpen(Type genericDefinition)
+            => _open.TryGetValue(genericDefinition, out var list) ? list : Empty;
     }
 
     [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
@@ -869,7 +1116,11 @@ public sealed class Container : IContainer
         return _activatorCache.GetOrAdd(reg, compiled);
     }
 
-    private readonly Dictionary<Registration, Func<IResolver, object, object>> _decoratorActivatorCache = new();
+    // Compiled decorator activators, keyed by the (decorator registration, closed service type) pair.
+    // The closed service type is part of the key so a single open-generic decorator registration
+    // (e.g. on IRepository<>) caches one compiled activator per closed service it wraps
+    // (IRepository<User>, IRepository<Order>, ...). A ConcurrentDictionary gives lock-free reads.
+    private readonly ConcurrentDictionary<(Registration Decorator, Type ServiceType), Func<IResolver, object, object>> _decoratorActivatorCache = new();
 
     [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
     [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
@@ -896,14 +1147,36 @@ public sealed class Container : IContainer
     [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
     [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private Func<IResolver, object, object> GetOrCompileDecoratorActivator(Registration dec, Type serviceType)
-    {
-        lock (_lock)
-        {
-            if (_decoratorActivatorCache.TryGetValue(dec, out var cached)) return cached;
-        }
+        => _decoratorActivatorCache.GetOrAdd((dec, serviceType), static (key, self) => self.CompileDecoratorActivator(key.Decorator, key.ServiceType), this);
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    private Func<IResolver, object, object> CompileDecoratorActivator(Registration dec, Type serviceType)
+    {
         var decType = dec.DecoratorType
             ?? throw new InjectorException($"Decorator registration for '{dec.ServiceType.FullName}' has no decorator type.");
+
+        // Open-generic decorator (registered on e.g. IRepository<>): close the decorator
+        // implementation with the service's generic arguments so it matches the closed service type.
+        if (decType.IsGenericTypeDefinition)
+        {
+            if (!serviceType.IsConstructedGenericType)
+            {
+                throw new InjectorException(
+                    $"Open-generic decorator '{decType.FullName}' cannot be applied to non-generic service '{serviceType.FullName}'.");
+            }
+            try
+            {
+                decType = decType.MakeGenericType(serviceType.GenericTypeArguments);
+            }
+            catch (ArgumentException ex)
+            {
+                throw new InjectorException(
+                    $"Cannot close open-generic decorator '{decType.FullName}' for service '{serviceType.FullName}': {ex.Message}",
+                    ex);
+            }
+        }
+
         var ctor = Activators.SelectConstructor(decType, _ => true);
 
         var resolverParam = Expression.Parameter(typeof(IResolver), "r");
@@ -931,12 +1204,7 @@ public sealed class Container : IContainer
         var newExpr = Expression.New(ctor, ctorArgExprs);
         var body = Expression.Convert(newExpr, typeof(object));
         var lambda = Expression.Lambda<Func<IResolver, object, object>>(body, resolverParam, innerParam);
-        var compiled = lambda.Compile();
-        lock (_lock)
-        {
-            _decoratorActivatorCache[dec] = compiled;
-        }
-        return compiled;
+        return lambda.Compile();
     }
 
     [RequiresDynamicCode(TrimmingMessages.DynamicCode)]

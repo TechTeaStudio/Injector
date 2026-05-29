@@ -67,6 +67,70 @@ internal sealed class Scope : IScope
         return _container.ResolveDictionaryInternal<TKey, T>(this);
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    public T ResolveKeyed<T>(object key) => (T)ResolveKeyed(typeof(T), key);
+
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    public object ResolveKeyed(Type serviceType, object key)
+    {
+        EnsureNotDisposed();
+        return _container.ResolveKeyedOrThrow(serviceType, key, this);
+    }
+
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    public bool TryResolveKeyed<T>(object key, out T value)
+    {
+        EnsureNotDisposed();
+        if (_container.TryResolveKeyedInternal(typeof(T), key, this, out var resolved))
+        {
+            value = (T)resolved!;
+            return true;
+        }
+        value = default!;
+        return false;
+    }
+
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    public bool TryResolve<T>(out T value)
+    {
+        EnsureNotDisposed();
+        if (_container.TryResolveInternal(typeof(T), this, out var resolved))
+        {
+            value = (T)resolved!;
+            return true;
+        }
+        value = default!;
+        return false;
+    }
+
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    public bool TryResolve(Type serviceType, out object? value)
+    {
+        EnsureNotDisposed();
+        return _container.TryResolveInternal(serviceType, this, out value);
+    }
+
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    public T? ResolveOptional<T>()
+    {
+        EnsureNotDisposed();
+        return _container.TryResolveInternal(typeof(T), this, out var resolved) ? (T?)resolved : default;
+    }
+
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    public object? ResolveOptional(Type serviceType)
+    {
+        EnsureNotDisposed();
+        return _container.TryResolveInternal(serviceType, this, out var resolved) ? resolved : null;
+    }
+
     /// <summary>
     /// Begins a nested lifetime scope whose configuration overrides the parent. The child scope
     /// sees every parent registration plus whatever <paramref name="configure"/> registers.

@@ -47,8 +47,8 @@ internal static class KeyedResolutionHelpers
 
     /// <summary>
     /// Best-effort keyed retrieval given only an <see cref="IResolver"/> (e.g. inside a factory
-    /// delegate). Routes through <see cref="Container.ResolveKeyed"/> when the resolver is one of
-    /// the known concrete types; otherwise returns <c>null</c>.
+    /// delegate). Routes through <see cref="Container.ResolveKeyed(Type, object, Scope?)"/> when the
+    /// resolver is one of the known concrete types; otherwise returns <c>null</c>.
     /// </summary>
     [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
     [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
