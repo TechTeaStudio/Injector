@@ -52,7 +52,7 @@ You probably **don't** want this library when you need NativeAOT or trimming: th
 | `IAsyncDisposable` | yes | yes | yes |
 | Circular detection with full chain | yes | partial | partial |
 | ASP.NET Core / Hosting integration | via sidecar | via `Autofac.Extensions.DependencyInjection` | native |
-| Keyed services (.NET 8 `[FromKeyedServices]`) | yes (via sidecar) | yes | yes |
+| Keyed services (`ResolveKeyed` core + .NET 8 `[FromKeyedServices]` sidecar) | yes | yes | yes |
 | NativeAOT / trimming | annotated (`RequiresDynamicCode` / `RequiresUnreferencedCode`); not runtime-compatible | partial | yes |
 
 The honest pitch: Injector sits between **"MEDI plus Scrutor"** and **"a full Autofac setup"**. If you've ever installed Scrutor for decorators, then realised you also wanted lifecycle hooks and `Owned<T>`, this is the package that already covers both without the Autofac surface area.
@@ -98,8 +98,8 @@ dotnet add package TechTeaStudio.Injector.Extensions.DependencyInjection
 Or pin specific versions in `.csproj`:
 
 ```xml
-<PackageReference Include="TechTeaStudio.Injector" Version="0.3.0" />
-<PackageReference Include="TechTeaStudio.Injector.Extensions.DependencyInjection" Version="0.3.1" />
+<PackageReference Include="TechTeaStudio.Injector" Version="0.4.0" />
+<PackageReference Include="TechTeaStudio.Injector.Extensions.DependencyInjection" Version="0.3.2" />
 ```
 
 ## Quick start (core)
@@ -331,6 +331,14 @@ public interface IResolver
     IEnumerable<T>             ResolveAll<T>();
     IEnumerable<object>        ResolveAll(Type serviceType);
     IDictionary<TKey, T>       ResolveDictionary<TKey, T>() where TKey : notnull;
+
+    T                          ResolveKeyed<T>(object key);
+    object                     ResolveKeyed(Type serviceType, object key);
+    bool                       TryResolveKeyed<T>(object key, out T value);
+    bool                       TryResolve<T>(out T value);
+    bool                       TryResolve(Type serviceType, out object? value);
+    T?                         ResolveOptional<T>();
+    object?                    ResolveOptional(Type serviceType);
 }
 
 public interface IContainer : IResolver, IDisposable, IAsyncDisposable

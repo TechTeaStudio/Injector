@@ -4,7 +4,7 @@
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <RootNamespace>TechTeaStudio.Injector.Extensions.DependencyInjection</RootNamespace>
     <AssemblyName>TechTeaStudio.Injector.Extensions.DependencyInjection</AssemblyName>
-    <Version>0.3.1</Version>
+    <Version>0.3.2</Version>
 
     <Description>Microsoft.Extensions.DependencyInjection adapter for TechTeaStudio.Injector. Plugs the Injector container into ASP.NET Core / Generic Host / EF Core via IServiceProvider, IServiceScope, IServiceScopeFactory, IServiceProviderFactory&lt;IContainerBuilder&gt;, IServiceProviderIsService, IServiceProviderIsKeyedService, IKeyedServiceProvider, and an IServiceCollection import helper.</Description>
     <PackageId>TechTeaStudio.Injector.Extensions.DependencyInjection</PackageId>
@@ -29,6 +29,8 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
 
     <PackageReleaseNotes>
+v0.3.2: Rebuilt against core 0.4.0; the adapter exposes the new keyed/optional resolution and open-generic decorators. Documentation fix.
+
 v0.3.1: NativeAOT / trimming diagnostics. The adapter enables the trim/AOT analyzers; methods implementing MEDI interfaces carry targeted [UnconditionalSuppressMessage] with justifications. Not trim/AOT-safe at runtime (it drives the expression-tree-compiled core).
 
 v0.3.0: Microsoft.Extensions.DependencyInjection adapter for TechTeaStudio.Injector.

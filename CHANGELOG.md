@@ -3,6 +3,30 @@
 All notable changes to this project are documented here.
 Format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-05-29
+
+**Core** (`TechTeaStudio.Injector`). Engine hardening, faster resolution, and a richer resolution API.
+
+### Added
+- **Public keyed resolution.** `ResolveKeyed<T>(object key)`, `ResolveKeyed(Type, object key)`, and `TryResolveKeyed<T>(object key, out T value)` on `IResolver`, so `WithKey(...)` registrations are reachable from the core API (previously only via the MEDI sidecar or `ResolveDictionary`).
+- **Non-throwing resolution.** `TryResolve<T>(out T value)` and `ResolveOptional<T>()` plus `Type` overloads. Only a missing top-level registration yields false/null; a genuine construction failure still propagates.
+- **Registration probe.** `IContainer.IsRegistered<T>()` / `IsRegistered(Type)`.
+- **Open-generic decorators.** `RegisterDecorator` on an open generic (for example `IPipelineBehavior<,>`) now wraps closed resolutions, closing the decorator implementation over the service's type arguments. Decorators are pre-indexed by service type instead of scanned on every activation.
+- **Non-public method injection.** `[Inject]` methods that are non-public are now invoked, matching property-injection behavior.
+
+### Fixed
+- **Open-generic synthesis data race.** `_byServiceType` is now a `ConcurrentDictionary`, so lock-free readers are safe while a closed generic is synthesized under concurrent load.
+- **Singleton single-construction.** Singletons are constructed exactly once under parallel resolution (per-registration `Lazy<object>`), instead of racing and discarding a duplicate.
+
+### Performance
+- Lock-free activator caches (`ConcurrentDictionary`) remove the global lock from the resolve hot path.
+- A registration-lookup-before-collection-probe fast path avoids generic-type checks for plain services.
+- `Func<T>` / `Lazy<T>` / `Func<P, T>` activators are cached; `Func<P, T>` no longer recompiles its expression on every resolve.
+
+## [0.3.2] — 2026-05-29
+
+**Sidecar** (`TechTeaStudio.Injector.Extensions.DependencyInjection`). Rebuilt against core 0.4.0; the adapter exposes the new keyed/optional resolution and open-generic decorators. Documentation fix.
+
 ## [0.3.1] — 2026-05-29
 
 **Sidecar** (`TechTeaStudio.Injector.Extensions.DependencyInjection`).
