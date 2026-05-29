@@ -140,4 +140,82 @@ public class LazyFuncTests
         public Func<IFoo> Factory { get; }
         public NeedsFunc(Func<IFoo> factory) { Factory = factory; }
     }
+
+    // --- Caching behavior (FIX 3): Func<T>/Lazy<T>/Func<P,T> activators are cached but must stay
+    //     scope-correct. The activator factory is shared per type; the resolver is passed in per call. ---
+
+    [Fact]
+    public void Func_ScopedReturnsScopeCachedInstancePerScope()
+    {
+        var b = new ContainerBuilder();
+        b.Register<IFoo, Foo>().AsScoped();
+        using var c = b.Build();
+
+        using var s1 = c.CreateScope();
+        var f1 = s1.Resolve<Func<IFoo>>();
+        // A scoped service resolved through Func<T> returns the same scope-cached instance each call.
+        Assert.Same(f1(), f1());
+        Assert.Same(s1.Resolve<IFoo>(), f1());
+
+        using var s2 = c.CreateScope();
+        var f2 = s2.Resolve<Func<IFoo>>();
+        // Different scope -> different cached instance (proves the cached factory is not baking a scope).
+        Assert.NotSame(f1(), f2());
+        Assert.Same(s2.Resolve<IFoo>(), f2());
+    }
+
+    [Fact]
+    public void Lazy_ScopedResolvesScopeCachedInstance()
+    {
+        var b = new ContainerBuilder();
+        b.Register<IFoo, Foo>().AsScoped();
+        using var c = b.Build();
+
+        using var s1 = c.CreateScope();
+        var lazy1 = s1.Resolve<Lazy<IFoo>>();
+        Assert.Same(s1.Resolve<IFoo>(), lazy1.Value);
+
+        using var s2 = c.CreateScope();
+        var lazy2 = s2.Resolve<Lazy<IFoo>>();
+        Assert.NotSame(lazy1.Value, lazy2.Value);
+        Assert.Same(s2.Resolve<IFoo>(), lazy2.Value);
+    }
+
+    [Fact]
+    public void FuncWithParam_CachedFactoryStillResolvesScopedDepFromScope()
+    {
+        var b = new ContainerBuilder();
+        b.Register<ILogger, ConsoleLogger>().AsScoped();
+        b.Register<FooWithParamAndDep>();
+        using var c = b.Build();
+
+        using var s1 = c.CreateScope();
+        var factory1 = s1.Resolve<Func<string, FooWithParamAndDep>>();
+        var i1 = factory1("a");
+        Assert.Equal("a", i1.Tag);
+        // The scoped logger dependency must come from s1's scope cache, not the root.
+        Assert.Same(s1.Resolve<ILogger>(), i1.Logger);
+
+        using var s2 = c.CreateScope();
+        var factory2 = s2.Resolve<Func<string, FooWithParamAndDep>>();
+        var i2 = factory2("b");
+        Assert.Same(s2.Resolve<ILogger>(), i2.Logger);
+        Assert.NotSame(i1.Logger, i2.Logger);
+    }
+
+    [Fact]
+    public void FuncWithParam_RepeatedResolvesReuseCompiledActivator()
+    {
+        var b = new ContainerBuilder();
+        b.Register<FooWithParam>();
+        using var c = b.Build();
+
+        // Resolving the same closed Func<P,T> many times must not recompile per call and must
+        // keep producing correctly-bound delegates.
+        for (var i = 0; i < 5; i++)
+        {
+            var factory = c.Resolve<Func<string, FooWithParam>>();
+            Assert.Equal("v" + i, factory("v" + i).Tag);
+        }
+    }
 }

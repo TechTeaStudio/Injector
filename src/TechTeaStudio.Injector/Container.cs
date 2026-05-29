@@ -15,6 +15,16 @@ public sealed class Container : IContainer
     private readonly Dictionary<Type, List<Registration>> _byServiceType;
     private readonly Dictionary<Type, List<Registration>> _openGenericsByDef;
     private readonly ConcurrentDictionary<Registration, Func<IResolver, object>> _activatorCache = new();
+
+    // Synthetic Func<T> / Lazy<T> / Func<P,T> activator caches. Each maps a closed generic type to a
+    // scope-independent factory that, given the effective IResolver, produces the requested delegate
+    // (or Lazy) instance. Building the factory pays the reflection / expression-compile cost once per
+    // type; every subsequent resolve just invokes the cached factory. Keyed by the *return* type for
+    // Func<T>/Lazy<T> and by the *closed Func type* for Func<P,T>.
+    private readonly ConcurrentDictionary<Type, Func<IResolver, object>> _funcActivatorCache = new();
+    private readonly ConcurrentDictionary<Type, Func<IResolver, object>> _lazyActivatorCache = new();
+    private readonly ConcurrentDictionary<Type, Func<IResolver, object>> _funcWithParamsActivatorCache = new();
+
     private readonly Dictionary<Registration, object> _singletons = new();
     /// <summary>
     /// Owned instances kept for disposal at container teardown. The list preserves creation order
@@ -236,11 +246,8 @@ public sealed class Container : IContainer
             var inner = args[0];
             // new Lazy<T>(() => (T)resolver.Resolve(typeof(T)))
             var resolver = (IResolver?)scope ?? this;
-            var funcType = typeof(Func<>).MakeGenericType(inner);
-            var funcImpl = BuildResolveFunc(inner, resolver);
-            var lazyCtor = serviceType.GetConstructor(new[] { funcType })
-                ?? throw new InjectorException($"Lazy<{inner.FullName}> has no constructor taking Func<{inner.FullName}>.");
-            value = lazyCtor.Invoke(new[] { funcImpl });
+            var factory = _lazyActivatorCache.GetOrAdd(inner, MakeLazyActivator);
+            value = factory(resolver);
             return true;
         }
 
@@ -248,56 +255,93 @@ public sealed class Container : IContainer
         {
             var ret = args[0];
             var resolver = (IResolver?)scope ?? this;
-            value = BuildResolveFunc(ret, resolver);
+            var factory = _funcActivatorCache.GetOrAdd(ret, MakeFuncActivator);
+            value = factory(resolver);
             return true;
         }
 
         // Func<P, T> ... Func<P1, P2, ..., T> — last arg is the return type, the rest are ctor parameters.
         if (def.FullName is { } name && name.StartsWith("System.Func`", StringComparison.Ordinal) && args.Length >= 2)
         {
-            var ret = args[^1];
-            var paramTypes = new Type[args.Length - 1];
-            Array.Copy(args, 0, paramTypes, 0, paramTypes.Length);
-            value = BuildFuncWithParams(serviceType, ret, paramTypes, scope);
+            var resolver = (IResolver?)scope ?? this;
+            var factory = _funcWithParamsActivatorCache.GetOrAdd(serviceType, MakeFuncWithParamsActivator);
+            value = factory(resolver);
             return true;
         }
 
         return false;
     }
 
-    // Returns a Func<T> instance that resolves T from the supplied resolver each call.
-    private static object BuildResolveFunc(Type returnType, IResolver resolver)
+    // Builds (once per return type) a scope-independent factory that, given a resolver, produces a
+    // Func<T> resolving T from that resolver each call. The MakeGenericMethod reflection runs only on
+    // the cache miss; the returned delegate is reused for every later resolve of Func<T>.
+    private static Func<IResolver, object> MakeFuncActivator(Type returnType)
     {
         var method = typeof(Container)
-            .GetMethod(nameof(MakeResolveFunc), BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetMethod(nameof(FuncActivatorImpl), BindingFlags.NonPublic | BindingFlags.Static)!
             .MakeGenericMethod(returnType);
-        return method.Invoke(null, new object[] { resolver })!;
+        return (Func<IResolver, object>)method.Invoke(null, null)!;
     }
+
+    private static Func<IResolver, object> FuncActivatorImpl<T>()
+        => resolver => MakeResolveFunc<T>(resolver);
 
     private static Func<T> MakeResolveFunc<T>(IResolver resolver) => () => (T)resolver.Resolve(typeof(T));
 
-    // Returns a Func<P1, ..., Pn, T> that constructs T using the supplied params + container-resolved deps.
-    private object BuildFuncWithParams(Type funcType, Type returnType, Type[] paramTypes, Scope? scope)
+    // Builds (once per inner type) a factory that, given a resolver, news up a Lazy<T> whose value
+    // factory resolves T lazily. Replaces the per-resolve ctor.Invoke + BuildResolveFunc reflection.
+    private static Func<IResolver, object> MakeLazyActivator(Type inner)
     {
-        // We need to build: (p1, p2, ..., pn) => CreateWithArgs(returnType, [p1...pn])
-        // Then wrap that into the strongly-typed Func.
+        var method = typeof(Container)
+            .GetMethod(nameof(LazyActivatorImpl), BindingFlags.NonPublic | BindingFlags.Static)!
+            .MakeGenericMethod(inner);
+        return (Func<IResolver, object>)method.Invoke(null, null)!;
+    }
+
+    private static Func<IResolver, object> LazyActivatorImpl<T>()
+        => resolver => new Lazy<T>(() => (T)resolver.Resolve(typeof(T)));
+
+    // Builds (once per closed Func<P..,T> type) a scope-independent factory delegate. The expensive
+    // Expression.Compile happens here, on the cache miss only. The compiled outer lambda takes the
+    // effective IResolver as a *parameter* (it is no longer baked in as a constant the way `scope`
+    // used to be), and returns a freshly-bound Func<P..,T> that constructs T via CreateWithExplicitArgs.
+    // Passing the resolver in keeps the compiled delegate cacheable and shared across scopes.
+    private Func<IResolver, object> MakeFuncWithParamsActivator(Type funcType)
+    {
+        var args = funcType.GetGenericArguments();
+        var returnType = args[^1];
+        var paramTypes = new Type[args.Length - 1];
+        Array.Copy(args, 0, paramTypes, 0, paramTypes.Length);
+
+        // Outer parameter: the effective resolver supplied at resolve time.
+        var resolverParam = Expression.Parameter(typeof(IResolver), "resolver");
+
+        // Inner lambda parameters: (p1, p2, ..., pn) matching the requested Func signature.
         var paramExprs = paramTypes.Select((t, i) => Expression.Parameter(t, "p" + i)).ToArray();
-        // Capture `this` and `scope` and `paramTypes` in a closure:
+
         var capturedContainer = Expression.Constant(this, typeof(Container));
-        var capturedScope = Expression.Constant(scope, typeof(Scope));
         var capturedReturn = Expression.Constant(returnType, typeof(Type));
         var capturedParamTypes = Expression.Constant(paramTypes, typeof(Type[]));
         var argsArray = Expression.NewArrayInit(typeof(object),
             paramExprs.Select(p => Expression.Convert(p, typeof(object))).ToArray());
 
+        // Recover the originating Scope (or null for a root resolve) from the resolver so
+        // CreateWithExplicitArgs sees exactly the `scope` value it used to receive as a constant.
+        // `resolver` is either the resolving Scope or this Container; `as Scope` yields the former or null.
+        var scopeArg = Expression.TypeAs(resolverParam, typeof(Scope));
+
         var call = Expression.Call(
             capturedContainer,
             typeof(Container).GetMethod(nameof(CreateWithExplicitArgs), BindingFlags.NonPublic | BindingFlags.Instance)!,
-            capturedReturn, capturedParamTypes, argsArray, capturedScope);
+            capturedReturn, capturedParamTypes, argsArray, scopeArg);
 
         var converted = Expression.Convert(call, returnType);
-        var lambda = Expression.Lambda(funcType, converted, paramExprs);
-        return lambda.Compile();
+        var innerLambda = Expression.Lambda(funcType, converted, paramExprs);
+
+        // Outer lambda: resolver => (object)(Func<P..,T>)((p1..pn) => CreateWithExplicitArgs(...)).
+        var outer = Expression.Lambda<Func<IResolver, object>>(
+            Expression.Convert(innerLambda, typeof(object)), resolverParam);
+        return outer.Compile();
     }
 
     internal object CreateWithExplicitArgs(Type targetType, Type[] paramTypes, object?[] paramValues, Scope? scope)
