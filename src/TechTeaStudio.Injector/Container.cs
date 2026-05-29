@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -13,7 +14,7 @@ public sealed class Container : IContainer
     private readonly List<Registration> _registrations;
     private readonly Dictionary<Type, List<Registration>> _byServiceType;
     private readonly Dictionary<Type, List<Registration>> _openGenericsByDef;
-    private readonly Dictionary<Registration, Func<IResolver, object>> _activatorCache = new();
+    private readonly ConcurrentDictionary<Registration, Func<IResolver, object>> _activatorCache = new();
     private readonly Dictionary<Registration, object> _singletons = new();
     /// <summary>
     /// Owned instances kept for disposal at container teardown. The list preserves creation order
@@ -616,14 +617,13 @@ public sealed class Container : IContainer
         }
     }
 
-    private readonly Dictionary<Registration, Func<IResolver, object>> _ctorOnlyActivatorCache = new();
+    private readonly ConcurrentDictionary<Registration, Func<IResolver, object>> _ctorOnlyActivatorCache = new();
 
     private Func<IResolver, object> GetOrCompileConstructorOnlyActivator(Registration reg, Type implType)
     {
-        lock (_lock)
-        {
-            if (_ctorOnlyActivatorCache.TryGetValue(reg, out var cached)) return cached;
-        }
+        // Lock-free fast path: most resolves hit an already-compiled activator.
+        if (_ctorOnlyActivatorCache.TryGetValue(reg, out var cached)) return cached;
+
         var resolverParam = Expression.Parameter(typeof(IResolver), "r");
         Expression ResolveDep(Type depType)
         {
@@ -633,11 +633,8 @@ public sealed class Container : IContainer
         var body = Activators.BuildConstructorOnlyExpression(implType, resolverParam, ResolveDep, BuiltInIsResolvable);
         var lambda = Expression.Lambda<Func<IResolver, object>>(body, resolverParam);
         var compiled = lambda.Compile();
-        lock (_lock)
-        {
-            _ctorOnlyActivatorCache[reg] = compiled;
-        }
-        return compiled;
+        // Two threads racing to compile the same activator is fine; the loser's copy is dropped.
+        return _ctorOnlyActivatorCache.GetOrAdd(reg, compiled);
     }
 
     private bool BuiltInIsResolvable(Type t)
@@ -667,10 +664,9 @@ public sealed class Container : IContainer
 
     private Func<IResolver, object> GetOrCompileActivator(Registration reg, Type implType, HashSet<Type> visiting, Stack<Type> chain)
     {
-        lock (_lock)
-        {
-            if (_activatorCache.TryGetValue(reg, out var cached)) return cached;
-        }
+        // Lock-free fast path: most resolves hit an already-compiled activator, so reading the
+        // cache must not serialize on the global lock.
+        if (_activatorCache.TryGetValue(reg, out var cached)) return cached;
 
         var resolverParam = Expression.Parameter(typeof(IResolver), "r");
         Expression ResolveDep(Type depType)
@@ -711,11 +707,8 @@ public sealed class Container : IContainer
         var lambda = Expression.Lambda<Func<IResolver, object>>(body, resolverParam);
         var compiled = lambda.Compile();
 
-        lock (_lock)
-        {
-            _activatorCache[reg] = compiled;
-        }
-        return compiled;
+        // Two threads racing to compile the same activator is fine; the loser's copy is dropped.
+        return _activatorCache.GetOrAdd(reg, compiled);
     }
 
     private readonly Dictionary<Registration, Func<IResolver, object, object>> _decoratorActivatorCache = new();
