@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -11,10 +12,19 @@ namespace TechTeaStudio.Injector;
 public sealed class Container : IContainer
 {
     private readonly List<Registration> _registrations;
-    private readonly Dictionary<Type, List<Registration>> _byServiceType;
+    // Closed-type lookup. A ConcurrentDictionary so lock-free readers on hot paths are safe while
+    // GetRegistrations lazily publishes a synthesized closed-generic list (see FIX 1). Writes are
+    // still serialized under _lock so an open generic is synthesized at most once.
+    private readonly ConcurrentDictionary<Type, List<Registration>> _byServiceType;
+    // Open-generic definitions. Populated only in the constructor and never mutated afterwards, so
+    // a plain Dictionary is safe for concurrent reads.
     private readonly Dictionary<Type, List<Registration>> _openGenericsByDef;
     private readonly Dictionary<Registration, Func<IResolver, object>> _activatorCache = new();
     private readonly Dictionary<Registration, object> _singletons = new();
+    // Per-registration single-construction guard for singletons (see FIX 2). Each Lazy<object> uses
+    // ExecutionAndPublication so concurrent resolvers share exactly one construction, and `.Value`
+    // is evaluated OUTSIDE _lock so a singleton ctor may safely re-enter the container.
+    private readonly Dictionary<Registration, Lazy<object>> _singletonFactories = new();
     /// <summary>
     /// Owned instances kept for disposal at container teardown. The list preserves creation order
     /// (reversed at dispose time) and may contain entries that are <see cref="IDisposable"/>,
@@ -33,7 +43,7 @@ public sealed class Container : IContainer
     internal Container(IReadOnlyList<Registration> registrations)
     {
         _registrations = registrations.ToList();
-        _byServiceType = new Dictionary<Type, List<Registration>>();
+        _byServiceType = new ConcurrentDictionary<Type, List<Registration>>();
         _openGenericsByDef = new Dictionary<Type, List<Registration>>();
 
         foreach (var reg in _registrations)
@@ -451,6 +461,8 @@ public sealed class Container : IContainer
 
     private List<Registration> GetRegistrations(Type serviceType)
     {
+        // Lock-free fast path. Safe because _byServiceType is a ConcurrentDictionary, so this read
+        // can race with the publishing write below (and with other hot-path readers) without tearing.
         if (_byServiceType.TryGetValue(serviceType, out var list)) return list;
 
         // No closed registration; try open-generic fallback.
@@ -459,6 +471,8 @@ public sealed class Container : IContainer
             var def = serviceType.GetGenericTypeDefinition();
             if (_openGenericsByDef.TryGetValue(def, out var openList))
             {
+                // Serialize synthesis under _lock so MakeGenericType runs at most once per closed
+                // type; the synthesized list is then published into the concurrent dictionary.
                 lock (_lock)
                 {
                     // Double-check after taking the lock — another thread may have synthesized.
@@ -513,26 +527,46 @@ public sealed class Container : IContainer
         switch (reg.Lifetime)
         {
             case Lifetime.Singleton:
+            {
+                // Fast path: already-materialized singleton (includes RegisterInstance singletons
+                // pre-filled in the constructor).
                 lock (_lock)
                 {
                     if (_singletons.TryGetValue(reg, out var existing)) return existing;
                 }
-                var singleton = CreateInstance(reg, scope, visiting, chain);
+
+                // Get-or-create a per-registration Lazy<object> so concurrent resolvers share a
+                // single construction. Only the cheap factory bookkeeping happens under _lock; the
+                // actual user constructor runs when .Value is read OUTSIDE the lock, so a singleton
+                // ctor that resolves another service can safely re-enter the container.
+                Lazy<object> lazy;
                 lock (_lock)
                 {
-                    if (!_singletons.TryGetValue(reg, out var raceWinner))
+                    if (!_singletonFactories.TryGetValue(reg, out lazy!))
+                    {
+                        lazy = new Lazy<object>(
+                            () => CreateInstance(reg, scope, visiting, chain),
+                            LazyThreadSafetyMode.ExecutionAndPublication);
+                        _singletonFactories[reg] = lazy;
+                    }
+                }
+
+                // Runs the constructor at most once across all threads (and at most once total).
+                var singleton = lazy.Value;
+
+                // Publish + register for disposal exactly once. Re-entrancy (a singleton ctor that
+                // resolves the same singleton) lands here twice for one Lazy; the membership check
+                // keeps _ownedDisposables free of duplicates.
+                lock (_lock)
+                {
+                    if (!_singletons.ContainsKey(reg))
                     {
                         _singletons[reg] = singleton;
                         if (DisposalHelpers.IsTrackable(singleton)) _ownedDisposables.Add(singleton);
-                        return singleton;
                     }
-                    // Lost the race — drop our duplicate (potentially disposing it).
-                    if (!ReferenceEquals(raceWinner, singleton) && DisposalHelpers.IsTrackable(singleton))
-                    {
-                        DisposalHelpers.DisposeSync(singleton);
-                    }
-                    return raceWinner;
                 }
+                return singleton;
+            }
 
             case Lifetime.Scoped:
                 if (scope is null)
@@ -920,6 +954,7 @@ public sealed class Container : IContainer
             snapshot = new List<object>(_ownedDisposables);
             _ownedDisposables.Clear();
             _singletons.Clear();
+            _singletonFactories.Clear();
             _activatorCache.Clear();
             _ctorOnlyActivatorCache.Clear();
             _decoratorActivatorCache.Clear();
@@ -942,6 +977,7 @@ public sealed class Container : IContainer
             snapshot = new List<object>(_ownedDisposables);
             _ownedDisposables.Clear();
             _singletons.Clear();
+            _singletonFactories.Clear();
             _activatorCache.Clear();
             _ctorOnlyActivatorCache.Clear();
             _decoratorActivatorCache.Clear();
