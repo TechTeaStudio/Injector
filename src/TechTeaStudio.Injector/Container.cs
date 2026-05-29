@@ -99,6 +99,38 @@ public sealed class Container : IContainer
         EnsureNotDisposed();
         if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
 
+        // Hot path: a plain (non-generic) registered service is by far the most common resolve.
+        // A non-generic type can never be a collection (IEnumerable<T> etc.) nor a synthetic
+        // Lazy<T>/Func<T>/Owned<T>, so TryResolveCollection / TryResolveLazyOrFunc would always
+        // miss it — running them first is wasted work on the hot path. Child-scope overrides live
+        // in scope.Extra and are consulted by the scope chain, which we keep ahead of the by-type
+        // lookup so a child registration still wins. Observable behavior is identical to the
+        // original order for non-generic types; generic types fall through to the unchanged path.
+        if (!serviceType.IsGenericType)
+        {
+            if (scope is not null && TryResolveFromScopeChain(serviceType, scope, out var fromChildFast))
+            {
+                return fromChildFast!;
+            }
+
+            var directRegs = GetRegistrations(serviceType);
+            if (directRegs.Count > 0)
+            {
+                // Last-registered wins for a single resolve (MEDI convention).
+                return Activate(directRegs[^1], scope, new HashSet<Type>(), new Stack<Type>());
+            }
+
+            // Unregistered non-generic type: only the built-in resolver/scope/container params or
+            // a not-registered error remain (collection/synthetic probes cannot match it).
+            if (serviceType == typeof(IResolver) || serviceType == typeof(IScope))
+            {
+                return (object?)scope ?? this;
+            }
+            if (serviceType == typeof(IContainer)) return this;
+
+            throw new ServiceNotRegisteredException(serviceType);
+        }
+
         // Built-in collection support.
         if (TryResolveCollection(serviceType, scope, out var collection)) return collection!;
 
