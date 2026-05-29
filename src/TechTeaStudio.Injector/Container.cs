@@ -20,7 +20,17 @@ public sealed class Container : IContainer
     // Open-generic definitions. Populated only in the constructor and never mutated afterwards, so
     // a plain Dictionary is safe for concurrent reads.
     private readonly Dictionary<Type, List<Registration>> _openGenericsByDef;
-    private readonly Dictionary<Registration, Func<IResolver, object>> _activatorCache = new();
+    private readonly ConcurrentDictionary<Registration, Func<IResolver, object>> _activatorCache = new();
+
+    // Synthetic Func<T> / Lazy<T> / Func<P,T> activator caches. Each maps a closed generic type to a
+    // scope-independent factory that, given the effective IResolver, produces the requested delegate
+    // (or Lazy) instance. Building the factory pays the reflection / expression-compile cost once per
+    // type; every subsequent resolve just invokes the cached factory. Keyed by the *return* type for
+    // Func<T>/Lazy<T> and by the *closed Func type* for Func<P,T>.
+    private readonly ConcurrentDictionary<Type, Func<IResolver, object>> _funcActivatorCache = new();
+    private readonly ConcurrentDictionary<Type, Func<IResolver, object>> _lazyActivatorCache = new();
+    private readonly ConcurrentDictionary<Type, Func<IResolver, object>> _funcWithParamsActivatorCache = new();
+
     private readonly Dictionary<Registration, object> _singletons = new();
     // Per-registration single-construction guard for singletons (see FIX 2). Each Lazy<object> uses
     // ExecutionAndPublication so concurrent resolvers share exactly one construction, and `.Value`
@@ -120,6 +130,38 @@ public sealed class Container : IContainer
     {
         EnsureNotDisposed();
         if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
+
+        // Hot path: a plain (non-generic) registered service is by far the most common resolve.
+        // A non-generic type can never be a collection (IEnumerable<T> etc.) nor a synthetic
+        // Lazy<T>/Func<T>/Owned<T>, so TryResolveCollection / TryResolveLazyOrFunc would always
+        // miss it — running them first is wasted work on the hot path. Child-scope overrides live
+        // in scope.Extra and are consulted by the scope chain, which we keep ahead of the by-type
+        // lookup so a child registration still wins. Observable behavior is identical to the
+        // original order for non-generic types; generic types fall through to the unchanged path.
+        if (!serviceType.IsGenericType)
+        {
+            if (scope is not null && TryResolveFromScopeChain(serviceType, scope, out var fromChildFast))
+            {
+                return fromChildFast!;
+            }
+
+            var directRegs = GetRegistrations(serviceType);
+            if (directRegs.Count > 0)
+            {
+                // Last-registered wins for a single resolve (MEDI convention).
+                return Activate(directRegs[^1], scope, new HashSet<Type>(), new Stack<Type>());
+            }
+
+            // Unregistered non-generic type: only the built-in resolver/scope/container params or
+            // a not-registered error remain (collection/synthetic probes cannot match it).
+            if (serviceType == typeof(IResolver) || serviceType == typeof(IScope))
+            {
+                return (object?)scope ?? this;
+            }
+            if (serviceType == typeof(IContainer)) return this;
+
+            throw new ServiceNotRegisteredException(serviceType);
+        }
 
         // Built-in collection support.
         if (TryResolveCollection(serviceType, scope, out var collection)) return collection!;
@@ -230,11 +272,8 @@ public sealed class Container : IContainer
             var inner = args[0];
             // new Lazy<T>(() => (T)resolver.Resolve(typeof(T)))
             var resolver = (IResolver?)scope ?? this;
-            var funcType = typeof(Func<>).MakeGenericType(inner);
-            var funcImpl = BuildResolveFunc(inner, resolver);
-            var lazyCtor = serviceType.GetConstructor(new[] { funcType })
-                ?? throw new InjectorException($"Lazy<{inner.FullName}> has no constructor taking Func<{inner.FullName}>.");
-            value = lazyCtor.Invoke(new[] { funcImpl });
+            var factory = _lazyActivatorCache.GetOrAdd(inner, MakeLazyActivator);
+            value = factory(resolver);
             return true;
         }
 
@@ -242,62 +281,105 @@ public sealed class Container : IContainer
         {
             var ret = args[0];
             var resolver = (IResolver?)scope ?? this;
-            value = BuildResolveFunc(ret, resolver);
+            var factory = _funcActivatorCache.GetOrAdd(ret, MakeFuncActivator);
+            value = factory(resolver);
             return true;
         }
 
         // Func<P, T> ... Func<P1, P2, ..., T> — last arg is the return type, the rest are ctor parameters.
         if (def.FullName is { } name && name.StartsWith("System.Func`", StringComparison.Ordinal) && args.Length >= 2)
         {
-            var ret = args[^1];
-            var paramTypes = new Type[args.Length - 1];
-            Array.Copy(args, 0, paramTypes, 0, paramTypes.Length);
-            value = BuildFuncWithParams(serviceType, ret, paramTypes, scope);
+            var resolver = (IResolver?)scope ?? this;
+            var factory = _funcWithParamsActivatorCache.GetOrAdd(serviceType, MakeFuncWithParamsActivator);
+            value = factory(resolver);
             return true;
         }
 
         return false;
     }
 
-    // Returns a Func<T> instance that resolves T from the supplied resolver each call.
+    // Builds (once per return type) a scope-independent factory that, given a resolver, produces a
+    // Func<T> resolving T from that resolver each call. The MakeGenericMethod reflection runs only on
+    // the cache miss; the returned delegate is reused for every later resolve of Func<T>.
     [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
     [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
-    private static object BuildResolveFunc(Type returnType, IResolver resolver)
+    private static Func<IResolver, object> MakeFuncActivator(Type returnType)
     {
         var method = typeof(Container)
-            .GetMethod(nameof(MakeResolveFunc), BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetMethod(nameof(FuncActivatorImpl), BindingFlags.NonPublic | BindingFlags.Static)!
             .MakeGenericMethod(returnType);
-        return method.Invoke(null, new object[] { resolver })!;
+        return (Func<IResolver, object>)method.Invoke(null, null)!;
     }
+
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    private static Func<IResolver, object> FuncActivatorImpl<T>()
+        => resolver => MakeResolveFunc<T>(resolver);
 
     [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
     [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private static Func<T> MakeResolveFunc<T>(IResolver resolver) => () => (T)resolver.Resolve(typeof(T));
 
-    // Returns a Func<P1, ..., Pn, T> that constructs T using the supplied params + container-resolved deps.
+    // Builds (once per inner type) a factory that, given a resolver, news up a Lazy<T> whose value
+    // factory resolves T lazily. Replaces the per-resolve ctor.Invoke + BuildResolveFunc reflection.
     [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
     [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
-    private object BuildFuncWithParams(Type funcType, Type returnType, Type[] paramTypes, Scope? scope)
+    private static Func<IResolver, object> MakeLazyActivator(Type inner)
     {
-        // We need to build: (p1, p2, ..., pn) => CreateWithArgs(returnType, [p1...pn])
-        // Then wrap that into the strongly-typed Func.
+        var method = typeof(Container)
+            .GetMethod(nameof(LazyActivatorImpl), BindingFlags.NonPublic | BindingFlags.Static)!
+            .MakeGenericMethod(inner);
+        return (Func<IResolver, object>)method.Invoke(null, null)!;
+    }
+
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    private static Func<IResolver, object> LazyActivatorImpl<T>()
+        => resolver => new Lazy<T>(() => (T)resolver.Resolve(typeof(T)));
+
+    // Builds (once per closed Func<P..,T> type) a scope-independent factory delegate. The expensive
+    // Expression.Compile happens here, on the cache miss only. The compiled outer lambda takes the
+    // effective IResolver as a *parameter* (it is no longer baked in as a constant the way `scope`
+    // used to be), and returns a freshly-bound Func<P..,T> that constructs T via CreateWithExplicitArgs.
+    // Passing the resolver in keeps the compiled delegate cacheable and shared across scopes.
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    private Func<IResolver, object> MakeFuncWithParamsActivator(Type funcType)
+    {
+        var args = funcType.GetGenericArguments();
+        var returnType = args[^1];
+        var paramTypes = new Type[args.Length - 1];
+        Array.Copy(args, 0, paramTypes, 0, paramTypes.Length);
+
+        // Outer parameter: the effective resolver supplied at resolve time.
+        var resolverParam = Expression.Parameter(typeof(IResolver), "resolver");
+
+        // Inner lambda parameters: (p1, p2, ..., pn) matching the requested Func signature.
         var paramExprs = paramTypes.Select((t, i) => Expression.Parameter(t, "p" + i)).ToArray();
-        // Capture `this` and `scope` and `paramTypes` in a closure:
+
         var capturedContainer = Expression.Constant(this, typeof(Container));
-        var capturedScope = Expression.Constant(scope, typeof(Scope));
         var capturedReturn = Expression.Constant(returnType, typeof(Type));
         var capturedParamTypes = Expression.Constant(paramTypes, typeof(Type[]));
         var argsArray = Expression.NewArrayInit(typeof(object),
             paramExprs.Select(p => Expression.Convert(p, typeof(object))).ToArray());
 
+        // Recover the originating Scope (or null for a root resolve) from the resolver so
+        // CreateWithExplicitArgs sees exactly the `scope` value it used to receive as a constant.
+        // `resolver` is either the resolving Scope or this Container; `as Scope` yields the former or null.
+        var scopeArg = Expression.TypeAs(resolverParam, typeof(Scope));
+
         var call = Expression.Call(
             capturedContainer,
             typeof(Container).GetMethod(nameof(CreateWithExplicitArgs), BindingFlags.NonPublic | BindingFlags.Instance)!,
-            capturedReturn, capturedParamTypes, argsArray, capturedScope);
+            capturedReturn, capturedParamTypes, argsArray, scopeArg);
 
         var converted = Expression.Convert(call, returnType);
-        var lambda = Expression.Lambda(funcType, converted, paramExprs);
-        return lambda.Compile();
+        var innerLambda = Expression.Lambda(funcType, converted, paramExprs);
+
+        // Outer lambda: resolver => (object)(Func<P..,T>)((p1..pn) => CreateWithExplicitArgs(...)).
+        var outer = Expression.Lambda<Func<IResolver, object>>(
+            Expression.Convert(innerLambda, typeof(object)), resolverParam);
+        return outer.Compile();
     }
 
     [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
@@ -689,16 +771,15 @@ public sealed class Container : IContainer
         }
     }
 
-    private readonly Dictionary<Registration, Func<IResolver, object>> _ctorOnlyActivatorCache = new();
+    private readonly ConcurrentDictionary<Registration, Func<IResolver, object>> _ctorOnlyActivatorCache = new();
 
     [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
     [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private Func<IResolver, object> GetOrCompileConstructorOnlyActivator(Registration reg, Type implType)
     {
-        lock (_lock)
-        {
-            if (_ctorOnlyActivatorCache.TryGetValue(reg, out var cached)) return cached;
-        }
+        // Lock-free fast path: most resolves hit an already-compiled activator.
+        if (_ctorOnlyActivatorCache.TryGetValue(reg, out var cached)) return cached;
+
         var resolverParam = Expression.Parameter(typeof(IResolver), "r");
         Expression ResolveDep(Type depType)
         {
@@ -708,11 +789,8 @@ public sealed class Container : IContainer
         var body = Activators.BuildConstructorOnlyExpression(implType, resolverParam, ResolveDep, BuiltInIsResolvable);
         var lambda = Expression.Lambda<Func<IResolver, object>>(body, resolverParam);
         var compiled = lambda.Compile();
-        lock (_lock)
-        {
-            _ctorOnlyActivatorCache[reg] = compiled;
-        }
-        return compiled;
+        // Two threads racing to compile the same activator is fine; the loser's copy is dropped.
+        return _ctorOnlyActivatorCache.GetOrAdd(reg, compiled);
     }
 
     private bool BuiltInIsResolvable(Type t)
@@ -744,10 +822,9 @@ public sealed class Container : IContainer
     [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private Func<IResolver, object> GetOrCompileActivator(Registration reg, Type implType, HashSet<Type> visiting, Stack<Type> chain)
     {
-        lock (_lock)
-        {
-            if (_activatorCache.TryGetValue(reg, out var cached)) return cached;
-        }
+        // Lock-free fast path: most resolves hit an already-compiled activator, so reading the
+        // cache must not serialize on the global lock.
+        if (_activatorCache.TryGetValue(reg, out var cached)) return cached;
 
         var resolverParam = Expression.Parameter(typeof(IResolver), "r");
         Expression ResolveDep(Type depType)
@@ -788,11 +865,8 @@ public sealed class Container : IContainer
         var lambda = Expression.Lambda<Func<IResolver, object>>(body, resolverParam);
         var compiled = lambda.Compile();
 
-        lock (_lock)
-        {
-            _activatorCache[reg] = compiled;
-        }
-        return compiled;
+        // Two threads racing to compile the same activator is fine; the loser's copy is dropped.
+        return _activatorCache.GetOrAdd(reg, compiled);
     }
 
     private readonly Dictionary<Registration, Func<IResolver, object, object>> _decoratorActivatorCache = new();
@@ -1106,6 +1180,9 @@ public sealed class Container : IContainer
             _singletonFactories.Clear();
             _activatorCache.Clear();
             _ctorOnlyActivatorCache.Clear();
+            _funcActivatorCache.Clear();
+            _lazyActivatorCache.Clear();
+            _funcWithParamsActivatorCache.Clear();
             _decoratorActivatorCache.Clear();
         }
         for (var i = snapshot.Count - 1; i >= 0; i--)
@@ -1129,6 +1206,9 @@ public sealed class Container : IContainer
             _singletonFactories.Clear();
             _activatorCache.Clear();
             _ctorOnlyActivatorCache.Clear();
+            _funcActivatorCache.Clear();
+            _lazyActivatorCache.Clear();
+            _funcWithParamsActivatorCache.Clear();
             _decoratorActivatorCache.Clear();
         }
         for (var i = snapshot.Count - 1; i >= 0; i--)
