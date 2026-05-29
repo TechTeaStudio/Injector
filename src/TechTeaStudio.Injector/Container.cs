@@ -991,6 +991,9 @@ public sealed class Container : IContainer
             _singletons.Clear();
             _activatorCache.Clear();
             _ctorOnlyActivatorCache.Clear();
+            _funcActivatorCache.Clear();
+            _lazyActivatorCache.Clear();
+            _funcWithParamsActivatorCache.Clear();
             _decoratorActivatorCache.Clear();
         }
         for (var i = snapshot.Count - 1; i >= 0; i--)
@@ -1013,6 +1016,9 @@ public sealed class Container : IContainer
             _singletons.Clear();
             _activatorCache.Clear();
             _ctorOnlyActivatorCache.Clear();
+            _funcActivatorCache.Clear();
+            _lazyActivatorCache.Clear();
+            _funcWithParamsActivatorCache.Clear();
             _decoratorActivatorCache.Clear();
         }
         for (var i = snapshot.Count - 1; i >= 0; i--)
