@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -661,14 +662,77 @@ public sealed class Container : IContainer
         return new List<Registration>();
     }
 
+    // Pre-indexed decorator lookup, built once (lazily, thread-safe) from _registrations. Closed
+    // decorators are keyed by their exact ServiceType; open-generic decorators by their generic type
+    // definition. Replaces the former O(n) scan of _registrations on every activation with an O(1)
+    // dictionary probe. Built lazily (via LazyInitializer) so the whole feature stays inside the
+    // decorator subsystem and never touches the shared constructor / field block.
+    private DecoratorIndex? _decoratorIndex;
+    private object _decoratorIndexLock = new();
+
+    /// <summary>
+    /// Returns the decorators that apply to <paramref name="serviceType"/>, in registration order.
+    /// A closed service type picks up decorators registered on the exact type plus any registered on
+    /// the matching open-generic definition (so a decorator on <c>IRepository&lt;&gt;</c> wraps a
+    /// resolved <c>IRepository&lt;User&gt;</c>). The merge preserves declaration order across both
+    /// kinds so the decorator chain (innermost-first) is deterministic.
+    /// </summary>
     private List<Registration> GetDecorators(Type serviceType)
     {
-        var list = new List<Registration>();
-        foreach (var reg in _registrations)
+        var index = System.Threading.LazyInitializer.EnsureInitialized(
+            ref _decoratorIndex, ref _decoratorIndexLock, () => new DecoratorIndex(_registrations))!;
+        var closed = index.GetClosed(serviceType);
+
+        if (!serviceType.IsConstructedGenericType)
         {
-            if (reg.IsDecorator && reg.ServiceType == serviceType) list.Add(reg);
+            return closed.Count == 0 ? EmptyDecorators : closed;
         }
-        return list;
+
+        var open = index.GetOpen(serviceType.GetGenericTypeDefinition());
+        if (open.Count == 0) return closed.Count == 0 ? EmptyDecorators : closed;
+        if (closed.Count == 0) return open;
+
+        // Merge closed + open decorators, ordered by registration Order so chaining is deterministic.
+        var merged = new List<Registration>(closed.Count + open.Count);
+        merged.AddRange(closed);
+        merged.AddRange(open);
+        merged.Sort(static (a, b) => a.Order.CompareTo(b.Order));
+        return merged;
+    }
+
+    private static readonly List<Registration> EmptyDecorators = new();
+
+    /// <summary>
+    /// Immutable, build-once lookup of decorator registrations split into closed (keyed by exact
+    /// service type) and open-generic (keyed by generic type definition) buckets, each kept in
+    /// registration order.
+    /// </summary>
+    private sealed class DecoratorIndex
+    {
+        private static readonly List<Registration> Empty = new();
+        private readonly Dictionary<Type, List<Registration>> _closed = new();
+        private readonly Dictionary<Type, List<Registration>> _open = new();
+
+        public DecoratorIndex(IEnumerable<Registration> registrations)
+        {
+            foreach (var reg in registrations)
+            {
+                if (!reg.IsDecorator) continue;
+                var bucket = reg.ServiceType.IsGenericTypeDefinition ? _open : _closed;
+                if (!bucket.TryGetValue(reg.ServiceType, out var list))
+                {
+                    list = new List<Registration>();
+                    bucket[reg.ServiceType] = list;
+                }
+                list.Add(reg);
+            }
+        }
+
+        public List<Registration> GetClosed(Type serviceType)
+            => _closed.TryGetValue(serviceType, out var list) ? list : Empty;
+
+        public List<Registration> GetOpen(Type genericDefinition)
+            => _open.TryGetValue(genericDefinition, out var list) ? list : Empty;
     }
 
     internal object Activate(Registration reg, Scope? scope, HashSet<Type> visiting, Stack<Type> chain)
@@ -882,7 +946,11 @@ public sealed class Container : IContainer
         return compiled;
     }
 
-    private readonly Dictionary<Registration, Func<IResolver, object, object>> _decoratorActivatorCache = new();
+    // Compiled decorator activators, keyed by the (decorator registration, closed service type) pair.
+    // The closed service type is part of the key so a single open-generic decorator registration
+    // (e.g. on IRepository<>) caches one compiled activator per closed service it wraps
+    // (IRepository<User>, IRepository<Order>, ...). A ConcurrentDictionary gives lock-free reads.
+    private readonly ConcurrentDictionary<(Registration Decorator, Type ServiceType), Func<IResolver, object, object>> _decoratorActivatorCache = new();
 
     private object ApplyDecorators(Type serviceType, object inner, Scope? scope, HashSet<Type> visiting, Stack<Type> chain)
     {
@@ -905,14 +973,34 @@ public sealed class Container : IContainer
     }
 
     private Func<IResolver, object, object> GetOrCompileDecoratorActivator(Registration dec, Type serviceType)
-    {
-        lock (_lock)
-        {
-            if (_decoratorActivatorCache.TryGetValue(dec, out var cached)) return cached;
-        }
+        => _decoratorActivatorCache.GetOrAdd((dec, serviceType), static (key, self) => self.CompileDecoratorActivator(key.Decorator, key.ServiceType), this);
 
+    private Func<IResolver, object, object> CompileDecoratorActivator(Registration dec, Type serviceType)
+    {
         var decType = dec.DecoratorType
             ?? throw new InjectorException($"Decorator registration for '{dec.ServiceType.FullName}' has no decorator type.");
+
+        // Open-generic decorator (registered on e.g. IRepository<>): close the decorator
+        // implementation with the service's generic arguments so it matches the closed service type.
+        if (decType.IsGenericTypeDefinition)
+        {
+            if (!serviceType.IsConstructedGenericType)
+            {
+                throw new InjectorException(
+                    $"Open-generic decorator '{decType.FullName}' cannot be applied to non-generic service '{serviceType.FullName}'.");
+            }
+            try
+            {
+                decType = decType.MakeGenericType(serviceType.GenericTypeArguments);
+            }
+            catch (ArgumentException ex)
+            {
+                throw new InjectorException(
+                    $"Cannot close open-generic decorator '{decType.FullName}' for service '{serviceType.FullName}': {ex.Message}",
+                    ex);
+            }
+        }
+
         var ctor = Activators.SelectConstructor(decType, _ => true);
 
         var resolverParam = Expression.Parameter(typeof(IResolver), "r");
@@ -940,12 +1028,7 @@ public sealed class Container : IContainer
         var newExpr = Expression.New(ctor, ctorArgExprs);
         var body = Expression.Convert(newExpr, typeof(object));
         var lambda = Expression.Lambda<Func<IResolver, object, object>>(body, resolverParam, innerParam);
-        var compiled = lambda.Compile();
-        lock (_lock)
-        {
-            _decoratorActivatorCache[dec] = compiled;
-        }
-        return compiled;
+        return lambda.Compile();
     }
 
     private void ApplyPropertyMethodInjection(object obj, Scope? scope)

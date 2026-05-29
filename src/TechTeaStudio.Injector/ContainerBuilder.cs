@@ -181,9 +181,18 @@ public sealed class ContainerBuilder : IContainerBuilder
         foreach (var reg in _registrations)
         {
             if (!reg.IsDecorator) continue;
+
+            // Exact match: a closed decorator satisfied by a closed base, or an open-generic decorator
+            // (e.g. on IRepository<>) satisfied by an open-generic base registered on the same definition.
             if (nonDecoratorTypes.Contains(reg.ServiceType)) continue;
-            // Allow open-generic decorators to be satisfied by an open-generic base.
-            if (reg.ServiceType.IsGenericTypeDefinition && nonDecoratorTypes.Contains(reg.ServiceType)) continue;
+
+            // A closed decorator (e.g. on IRepository<User>) is also satisfied by a matching
+            // open-generic base (IRepository<>), since the container closes that base on demand.
+            if (reg.ServiceType.IsConstructedGenericType
+                && nonDecoratorTypes.Contains(reg.ServiceType.GetGenericTypeDefinition()))
+            {
+                continue;
+            }
 
             throw new RegistrationException(
                 $"Decorator for service type '{reg.ServiceType.FullName}' has no matching base registration.");
