@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace TechTeaStudio.Injector;
 
 /// <summary>
@@ -7,18 +9,26 @@ public interface IResolver
 {
     /// <summary>Resolves a single instance of <typeparamref name="T"/>.</summary>
     /// <typeparam name="T">Service type previously registered with the container.</typeparam>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     T Resolve<T>();
 
     /// <summary>Resolves a single instance of <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">Service type previously registered with the container.</param>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     object Resolve(Type serviceType);
 
     /// <summary>Resolves every registration of <typeparamref name="T"/> in registration order.</summary>
     /// <typeparam name="T">Service type previously registered (possibly multiple times) with the container.</typeparam>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     IEnumerable<T> ResolveAll<T>();
 
     /// <summary>Resolves every registration of <paramref name="serviceType"/> in registration order.</summary>
     /// <param name="serviceType">Service type previously registered (possibly multiple times) with the container.</param>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     IEnumerable<object> ResolveAll(Type serviceType);
 
     /// <summary>
@@ -26,5 +36,7 @@ public interface IResolver
     /// </summary>
     /// <typeparam name="TKey">Key type used at registration time (commonly <see cref="string"/> or an enum).</typeparam>
     /// <typeparam name="T">Service type registered with keys.</typeparam>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     IDictionary<TKey, T> ResolveDictionary<TKey, T>() where TKey : notnull;
 }

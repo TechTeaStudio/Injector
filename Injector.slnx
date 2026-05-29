@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/Benchmarks/">
+    <Project Path="benchmarks/TechTeaStudio.Injector.Benchmarks/TechTeaStudio.Injector.Benchmarks.csproj" />
+  </Folder>
   <Folder Name="/Samples/">
     <Project Path="samples/TechTeaStudio.Injector.Sample/TechTeaStudio.Injector.Sample.csproj" />
   </Folder>

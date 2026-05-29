@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using TechTeaStudio.Injector;
 
@@ -18,6 +19,8 @@ public static class ServiceCollectionExtensions
     /// <param name="builder">Target container builder.</param>
     /// <param name="services">Source service collection.</param>
     /// <returns>The same <paramref name="builder"/> for fluent chaining.</returns>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public static IContainerBuilder PopulateFromServiceCollection(this IContainerBuilder builder, IServiceCollection services)
     {
         if (builder is null) throw new ArgumentNullException(nameof(builder));
@@ -42,6 +45,8 @@ public static class ServiceCollectionExtensions
         return new InjectorServiceProvider(container);
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private static void ApplyDescriptor(IContainerBuilder builder, ServiceDescriptor descriptor)
     {
         var isKeyed = descriptor.IsKeyedService;
@@ -128,6 +133,8 @@ public static class ServiceCollectionExtensions
 
     // RegisterInstance<T> is generic; we have an `object` and a `Type` at runtime.
     // Wrap the instance in a singleton factory.
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private static IRegistrationBuilder RegisterInstanceNonGeneric(IContainerBuilder builder, Type serviceType, object instance)
     {
         return RegisterFactoryNonGeneric(builder, serviceType, _ => instance).AsSingleton();
@@ -136,6 +143,8 @@ public static class ServiceCollectionExtensions
     // Register<T>(Func<IResolver, T>) is generic; we have a `Type` at runtime.
     // The core library exposes `Register(Type, Type)` for type-to-type — but not Register(Type, factory).
     // Use reflection to call the generic factory overload.
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private static IRegistrationBuilder RegisterFactoryNonGeneric(
         IContainerBuilder builder, Type serviceType, Func<IResolver, object> factory)
     {

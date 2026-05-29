@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace TechTeaStudio.Injector;
 
 /// <summary>
@@ -33,22 +35,32 @@ internal sealed class Scope : IScope
     internal Scope? Parent => _parent;
     internal ChildScopeRegistry? Extra => _extra;
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public T Resolve<T>() => (T)Resolve(typeof(T));
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public object Resolve(Type serviceType)
     {
         EnsureNotDisposed();
         return _container.ResolveInternal(serviceType, this);
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public IEnumerable<T> ResolveAll<T>() => ResolveAll(typeof(T)).Cast<T>();
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public IEnumerable<object> ResolveAll(Type serviceType)
     {
         EnsureNotDisposed();
         return _container.ResolveAllInternal(serviceType, this);
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public IDictionary<TKey, T> ResolveDictionary<TKey, T>() where TKey : notnull
     {
         EnsureNotDisposed();
@@ -59,6 +71,8 @@ internal sealed class Scope : IScope
     /// Begins a nested lifetime scope whose configuration overrides the parent. The child scope
     /// sees every parent registration plus whatever <paramref name="configure"/> registers.
     /// </summary>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public IScope BeginLifetimeScope(Action<IContainerBuilder> configure)
     {
         if (configure is null) throw new ArgumentNullException(nameof(configure));

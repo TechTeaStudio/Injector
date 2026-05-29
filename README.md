@@ -32,7 +32,7 @@ You want this library when you need a real DI container with Autofac's feature s
 - A codebase that values an explicit `[Inject]` opt-in for property and method injection over conventions.
 - An ASP.NET Core / Generic Host service where you'd swap MEDI's container under the hood and keep the rest of your code unchanged. The sidecar handles that.
 
-You probably **don't** want this library when you need NativeAOT today (the v1.0 roadmap covers it via a source generator, not shipped yet), when MEDI's exact feature set already covers everything you do and you don't want decorators / hooks / `Owned`, or when your team is already invested in Autofac and switching containers is not worth the migration cost.
+You probably **don't** want this library when you need NativeAOT or trimming: the container compiles expression trees and uses reflection at runtime, so it is not AOT/trim-compatible. The public API is annotated with `[RequiresDynamicCode]` / `[RequiresUnreferencedCode]`, so compiling under `PublishAot` / `PublishTrimmed` surfaces accurate analyzer warnings instead of silent runtime failures; for those scenarios use a compile-time DI approach. You also may not want it when MEDI's exact feature set already covers everything you do and you don't want decorators / hooks / `Owned`, or when your team is already invested in Autofac and switching containers is not worth the migration cost.
 
 ## How it compares
 
@@ -53,9 +53,33 @@ You probably **don't** want this library when you need NativeAOT today (the v1.0
 | Circular detection with full chain | yes | partial | partial |
 | ASP.NET Core / Hosting integration | via sidecar | via `Autofac.Extensions.DependencyInjection` | native |
 | Keyed services (.NET 8 `[FromKeyedServices]`) | yes (via sidecar) | yes | yes |
-| NativeAOT | v1.0 roadmap | partial | yes |
+| NativeAOT / trimming | annotated (`RequiresDynamicCode` / `RequiresUnreferencedCode`); not runtime-compatible | partial | yes |
 
 The honest pitch: Injector sits between **"MEDI plus Scrutor"** and **"a full Autofac setup"**. If you've ever installed Scrutor for decorators, then realised you also wanted lifecycle hooks and `Owned<T>`, this is the package that already covers both without the Autofac surface area.
+
+## Performance
+
+A BenchmarkDotNet micro-benchmark suite lives in `benchmarks/TechTeaStudio.Injector.Benchmarks`. It pits `TechTeaStudio.Injector` against `Microsoft.Extensions.DependencyInjection` (MEDI) and `Autofac` over an identical object graph: a 3-level transient constructor chain, a scoped service with a dependency, a singleton, an open generic (`IRepository<T>` -> `Repository<T>`), and a full container build. Each scenario runs one benchmark per container with a `[MemoryDiagnoser]`.
+
+Run it yourself (the project ships a short job of 3 warmup plus 5 measured iterations, so the whole suite finishes in a couple of minutes):
+
+```bash
+dotnet run -c Release --project benchmarks/TechTeaStudio.Injector.Benchmarks --filter '*'
+```
+
+Numbers below were measured on an AMD Ryzen 7 8845HS, Windows 11, .NET 10.0.7 (X64 RyuJIT), BenchmarkDotNet v0.15.8, on 2026-05-29 with that short job. `Mean` is per-resolve (or per-build) wall time, `Alloc` is managed bytes allocated per operation. Lower is better on both.
+
+| Scenario | Injector | MEDI | Autofac |
+|---|---|---|---|
+| Transient resolve (3-level chain) | 333 ns / 984 B | 21 ns / 72 B | 652 ns / 1760 B |
+| Scoped resolve (create scope + resolve) | 319 ns / 1184 B | 108 ns / 360 B | 1134 ns / 4344 B |
+| Singleton resolve | 50 ns / 152 B | 7 ns / 0 B | 114 ns / 656 B |
+| Open-generic resolve (`IRepository<T>`) | 211 ns / 536 B | 13 ns / 24 B | 190 ns / 832 B |
+| Container build / compile | 554 ns / 3.57 KB | 1305 ns / 6.38 KB | 11615 ns / 28.54 KB |
+
+Reading the table: MEDI wins every resolution scenario because it is a hosting-optimized container with a hand-tuned fast path and minimal feature surface, which is exactly the trade-off described in [How it compares](#how-it-compares). Against Autofac, the closest match on features, Injector resolves transients, scoped services, and singletons faster with fewer allocations, lands roughly even on open generics, and builds the container an order of magnitude faster.
+
+These micro-benchmarks are indicative, not a guarantee: the short job above trades precision for speed (note the wide error bars at this iteration count), the graph is deliberately tiny, and real-application resolution cost is dominated by your own constructors and scope topology. Re-run the suite on your hardware with a longer job before drawing conclusions for your workload.
 
 ## Install
 
@@ -74,8 +98,8 @@ dotnet add package TechTeaStudio.Injector.Extensions.DependencyInjection
 Or pin specific versions in `.csproj`:
 
 ```xml
-<PackageReference Include="TechTeaStudio.Injector" Version="0.2.0" />
-<PackageReference Include="TechTeaStudio.Injector.Extensions.DependencyInjection" Version="0.3.0" />
+<PackageReference Include="TechTeaStudio.Injector" Version="0.3.0" />
+<PackageReference Include="TechTeaStudio.Injector.Extensions.DependencyInjection" Version="0.3.1" />
 ```
 
 ## Quick start (core)

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 
 namespace TechTeaStudio.Injector;
@@ -29,6 +30,8 @@ public interface IContainerBuilder
     /// </summary>
     /// <param name="serviceType">Service contract (may be an open generic type definition).</param>
     /// <param name="implementationType">Concrete implementation (may be an open generic type definition).</param>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     IRegistrationBuilder Register(Type serviceType, Type implementationType);
 
     /// <summary>
@@ -37,6 +40,8 @@ public interface IContainerBuilder
     /// <c>Register(typeof(Repository&lt;&gt;))</c>.
     /// </summary>
     /// <param name="serviceType">Concrete type to register (may be an open generic type definition).</param>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     IRegistrationBuilder Register(Type serviceType);
 
     /// <summary>
@@ -80,12 +85,15 @@ public interface IContainerBuilder
     /// <param name="asm">Assembly to scan.</param>
     /// <param name="filter">Optional predicate that decides whether a candidate type is registered.</param>
     /// <param name="lifetime">Lifetime for the registrations. Defaults to <see cref="Lifetime.Transient"/>.</param>
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     IContainerBuilder RegisterAssembly(Assembly asm, Predicate<Type>? filter = null, Lifetime lifetime = Lifetime.Transient);
 
     /// <summary>
     /// Compiles every registration and returns the built <see cref="IContainer"/>. The builder
     /// must not be used after <see cref="Build()"/> is called.
     /// </summary>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     IContainer Build();
 
     /// <summary>
@@ -94,6 +102,8 @@ public interface IContainerBuilder
     /// </summary>
     /// <param name="options">Build-time options. When <c>ValidateOnBuild</c> is true, every registration
     /// is resolved into a throwaway scope and failures are aggregated into a single exception.</param>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     IContainer Build(BuildOptions options);
 }
 

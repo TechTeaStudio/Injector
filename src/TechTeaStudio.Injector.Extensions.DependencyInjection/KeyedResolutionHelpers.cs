@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using TechTeaStudio.Injector;
 
 namespace TechTeaStudio.Injector.Extensions.DependencyInjection;
@@ -34,6 +35,8 @@ internal static class KeyedResolutionHelpers
     /// Tries to resolve a keyed service from the container or scope. Returns null if no registration
     /// of <paramref name="serviceType"/> with matching <paramref name="serviceKey"/> exists.
     /// </summary>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public static object? TryGetKeyedService(IContainer? container, IScope? scope, Type serviceType, object? serviceKey)
     {
         if (serviceKey is null) return null;
@@ -47,6 +50,8 @@ internal static class KeyedResolutionHelpers
     /// delegate). Routes through <see cref="Container.ResolveKeyed"/> when the resolver is one of
     /// the known concrete types; otherwise returns <c>null</c>.
     /// </summary>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public static object? TryGetKeyedServiceFromResolver(IResolver resolver, Type serviceType, object? serviceKey)
     {
         if (serviceKey is null) return null;

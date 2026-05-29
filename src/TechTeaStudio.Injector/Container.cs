@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -78,21 +79,33 @@ public sealed class Container : IContainer
     }
 
     /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public T Resolve<T>() => (T)Resolve(typeof(T));
 
     /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public object Resolve(Type serviceType) => ResolveInternal(serviceType, scope: null);
 
     /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public IEnumerable<T> ResolveAll<T>() => ResolveAll(typeof(T)).Cast<T>();
 
     /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public IEnumerable<object> ResolveAll(Type serviceType) => ResolveAllInternal(serviceType, scope: null);
 
     /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public IDictionary<TKey, T> ResolveDictionary<TKey, T>() where TKey : notnull
         => ResolveDictionaryInternal<TKey, T>(scope: null);
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     internal object ResolveInternal(Type serviceType, Scope? scope)
     {
         EnsureNotDisposed();
@@ -127,6 +140,8 @@ public sealed class Container : IContainer
         return Activate(reg, scope, new HashSet<Type>(), new Stack<Type>());
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private bool TryResolveFromScopeChain(Type serviceType, Scope scope, out object? value)
     {
         // Walk from the inner-most scope up. The first scope with a matching extra registration wins.
@@ -162,6 +177,8 @@ public sealed class Container : IContainer
         return false;
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private bool TryResolveLazyOrFunc(Type serviceType, Scope? scope, out object? value)
     {
         value = null;
@@ -233,6 +250,8 @@ public sealed class Container : IContainer
     }
 
     // Returns a Func<T> instance that resolves T from the supplied resolver each call.
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private static object BuildResolveFunc(Type returnType, IResolver resolver)
     {
         var method = typeof(Container)
@@ -241,9 +260,13 @@ public sealed class Container : IContainer
         return method.Invoke(null, new object[] { resolver })!;
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private static Func<T> MakeResolveFunc<T>(IResolver resolver) => () => (T)resolver.Resolve(typeof(T));
 
     // Returns a Func<P1, ..., Pn, T> that constructs T using the supplied params + container-resolved deps.
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private object BuildFuncWithParams(Type funcType, Type returnType, Type[] paramTypes, Scope? scope)
     {
         // We need to build: (p1, p2, ..., pn) => CreateWithArgs(returnType, [p1...pn])
@@ -267,6 +290,8 @@ public sealed class Container : IContainer
         return lambda.Compile();
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     internal object CreateWithExplicitArgs(Type targetType, Type[] paramTypes, object?[] paramValues, Scope? scope)
     {
         EnsureNotDisposed();
@@ -363,6 +388,8 @@ public sealed class Container : IContainer
             $"No public constructor on '{implType.FullName}' can accept the supplied Func<...> parameters [{string.Join(", ", paramTypes.Select(t => t.FullName))}] and resolve the rest from the container.");
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     internal IEnumerable<object> ResolveAllInternal(Type serviceType, Scope? scope)
     {
         EnsureNotDisposed();
@@ -395,6 +422,8 @@ public sealed class Container : IContainer
         return results;
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     internal IDictionary<TKey, T> ResolveDictionaryInternal<TKey, T>(Scope? scope) where TKey : notnull
     {
         EnsureNotDisposed();
@@ -414,6 +443,8 @@ public sealed class Container : IContainer
         return dict;
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private bool TryResolveCollection(Type serviceType, Scope? scope, out object? value)
     {
         value = null;
@@ -446,9 +477,13 @@ public sealed class Container : IContainer
         return false;
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private IDictionary<TKey, TElem> BuildDictionary<TKey, TElem>(Scope? scope) where TKey : notnull
         => ResolveDictionaryInternal<TKey, TElem>(scope);
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private List<Registration> GetRegistrations(Type serviceType)
     {
         if (_byServiceType.TryGetValue(serviceType, out var list)) return list;
@@ -507,6 +542,8 @@ public sealed class Container : IContainer
         return list;
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     internal object Activate(Registration reg, Scope? scope, HashSet<Type> visiting, Stack<Type> chain)
     {
         // Lifetime caching.
@@ -551,6 +588,8 @@ public sealed class Container : IContainer
         }
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private object CreateInstance(Registration reg, Scope? scope, HashSet<Type> visiting, Stack<Type> chain)
     {
         // Pre-built instance.
@@ -618,6 +657,8 @@ public sealed class Container : IContainer
 
     private readonly Dictionary<Registration, Func<IResolver, object>> _ctorOnlyActivatorCache = new();
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private Func<IResolver, object> GetOrCompileConstructorOnlyActivator(Registration reg, Type implType)
     {
         lock (_lock)
@@ -665,6 +706,8 @@ public sealed class Container : IContainer
         return false;
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private Func<IResolver, object> GetOrCompileActivator(Registration reg, Type implType, HashSet<Type> visiting, Stack<Type> chain)
     {
         lock (_lock)
@@ -720,6 +763,8 @@ public sealed class Container : IContainer
 
     private readonly Dictionary<Registration, Func<IResolver, object, object>> _decoratorActivatorCache = new();
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private object ApplyDecorators(Type serviceType, object inner, Scope? scope, HashSet<Type> visiting, Stack<Type> chain)
     {
         var decorators = GetDecorators(serviceType);
@@ -740,6 +785,8 @@ public sealed class Container : IContainer
         return current;
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private Func<IResolver, object, object> GetOrCompileDecoratorActivator(Registration dec, Type serviceType)
     {
         lock (_lock)
@@ -784,6 +831,8 @@ public sealed class Container : IContainer
         return compiled;
     }
 
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     private void ApplyPropertyMethodInjection(object obj, Scope? scope)
     {
         var t = obj.GetType();
@@ -863,6 +912,8 @@ public sealed class Container : IContainer
     /// Resolves a keyed registration directly, honouring lifetime semantics. Returns <c>null</c>
     /// when no registration matches the supplied <paramref name="serviceType"/> + <paramref name="key"/>.
     /// </summary>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     internal object? ResolveKeyed(Type serviceType, object key, Scope? scope)
     {
         EnsureNotDisposed();
@@ -876,6 +927,8 @@ public sealed class Container : IContainer
     /// scope, accumulating failures into an <see cref="AggregateException"/>. Open-generic registrations
     /// cannot be validated without sample type arguments, so they are skipped.
     /// </summary>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     internal void ValidateAllRegistrations()
     {
         var errors = new List<Exception>();
@@ -900,6 +953,102 @@ public sealed class Container : IContainer
                 "Container validation failed: " + inner,
                 errors);
         }
+    }
+
+    /// <summary>
+    /// Detects captive dependencies: every <see cref="Lifetime.Singleton"/> registration whose
+    /// constructor graph reaches a <see cref="Lifetime.Scoped"/> service. Each offending singleton
+    /// yields a <see cref="CaptiveDependencyException"/>; all are aggregated into an
+    /// <see cref="AggregateException"/> using the same pattern as <see cref="ValidateAllRegistrations"/>.
+    /// Open-generic, decorator, factory, and pre-built-instance registrations carry no inspectable
+    /// constructor graph and are treated as leaves (open-generics are skipped entirely).
+    /// </summary>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    internal void ValidateNoCaptiveDependencies()
+    {
+        var errors = new List<Exception>();
+        foreach (var reg in _registrations)
+        {
+            if (reg.IsDecorator) continue;
+            if (reg.IsOpenGeneric) continue; // no concrete type args to inspect.
+            if (reg.Lifetime != Lifetime.Singleton) continue;
+            if (reg.ImplementationType is null) continue; // factory/instance: cannot introspect.
+
+            // Per-singleton walk. `visited` guards against cycles (caught elsewhere) and re-checking.
+            var visited = new HashSet<Type>();
+            var path = new List<Type> { reg.ServiceType };
+            DetectCaptive(reg.ServiceType, reg.ImplementationType, reg.ServiceType, visited, path, errors);
+        }
+
+        if (errors.Count > 0)
+        {
+            var inner = string.Join(" | ", errors.Select(e => e.Message));
+            throw new AggregateException(
+                "Scope validation failed: " + inner,
+                errors);
+        }
+    }
+
+    // Walks the constructor dependencies of `implType`, looking for a scoped registration reachable
+    // from the originating singleton `rootService`. Records at most one error per captured scoped type.
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    private void DetectCaptive(
+        Type currentService,
+        Type implType,
+        Type rootService,
+        HashSet<Type> visited,
+        List<Type> path,
+        List<Exception> errors)
+    {
+        if (!visited.Add(currentService)) return;
+
+        var ctor = SelectConstructorForValidation(implType);
+        if (ctor is null) return;
+
+        foreach (var p in ctor.GetParameters())
+        {
+            var depType = p.ParameterType;
+
+            // Resolve the dependency to its winning registration (last-registered-wins, like Resolve).
+            if (!_byServiceType.TryGetValue(depType, out var depRegs) || depRegs.Count == 0)
+            {
+                // Unregistered, built-in, or synthetic (IEnumerable<>, Lazy<>, Func<>, IResolver, ...).
+                // Captive detection only reasons about plain registered dependencies.
+                continue;
+            }
+
+            var depReg = depRegs[^1];
+            path.Add(depType);
+
+            if (depReg.Lifetime == Lifetime.Scoped)
+            {
+                errors.Add(new CaptiveDependencyException(rootService, depType, path.ToList()));
+            }
+            else if (depReg.ImplementationType is not null && !depReg.IsOpenGeneric)
+            {
+                // Recurse through non-scoped hops (singleton/transient) to catch transitive capture.
+                DetectCaptive(depType, depReg.ImplementationType, rootService, visited, path, errors);
+            }
+
+            path.RemoveAt(path.Count - 1);
+        }
+    }
+
+    // Returns the greediest public constructor the activator would choose, or null when the type has
+    // none. Validation inspects the same constructor the engine uses, without requiring resolvability.
+    // The GetConstructors reflection is trim-unsafe, so this method (like the rest of the captive-
+    // dependency walk and the Resolve/Build entry points) carries the trimming annotations.
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    private static ConstructorInfo? SelectConstructorForValidation(Type implType)
+    {
+        var ctors = implType
+            .GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+            .OrderByDescending(c => c.GetParameters().Length)
+            .ToArray();
+        return ctors.Length == 0 ? null : ctors[0];
     }
 
     private void EnsureNotDisposed()

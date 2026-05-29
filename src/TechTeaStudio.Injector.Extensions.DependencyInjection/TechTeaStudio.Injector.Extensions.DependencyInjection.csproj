@@ -4,7 +4,7 @@
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <RootNamespace>TechTeaStudio.Injector.Extensions.DependencyInjection</RootNamespace>
     <AssemblyName>TechTeaStudio.Injector.Extensions.DependencyInjection</AssemblyName>
-    <Version>0.3.0</Version>
+    <Version>0.3.1</Version>
 
     <Description>Microsoft.Extensions.DependencyInjection adapter for TechTeaStudio.Injector. Plugs the Injector container into ASP.NET Core / Generic Host / EF Core via IServiceProvider, IServiceScope, IServiceScopeFactory, IServiceProviderFactory&lt;IContainerBuilder&gt;, IServiceProviderIsService, IServiceProviderIsKeyedService, IKeyedServiceProvider, and an IServiceCollection import helper.</Description>
     <PackageId>TechTeaStudio.Injector.Extensions.DependencyInjection</PackageId>
@@ -14,6 +14,13 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
 
+    <!-- Turns on both the trimming (IL2xxx) and NativeAOT (IL3xxx) analyzers per-TFM. This adapter is
+         intentionally NOT trim/AOT-safe (it drives the expression-tree-compiled core container). It
+         cannot annotate the MEDI interface members it implements (IServiceProvider.GetService etc. are
+         not Requires*-annotated upstream), so the resolution paths carry targeted
+         [UnconditionalSuppressMessage] with justifications instead. -->
+    <IsAotCompatible>true</IsAotCompatible>
+
     <PackageProjectUrl>https://github.com/TechTeaStudio/Injector</PackageProjectUrl>
     <RepositoryType>git</RepositoryType>
 
@@ -22,7 +29,9 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
 
     <PackageReleaseNotes>
-v0.3.0 — Microsoft.Extensions.DependencyInjection adapter for TechTeaStudio.Injector.
+v0.3.1: NativeAOT / trimming diagnostics. The adapter enables the trim/AOT analyzers; methods implementing MEDI interfaces carry targeted [UnconditionalSuppressMessage] with justifications. Not trim/AOT-safe at runtime (it drives the expression-tree-compiled core).
+
+v0.3.0: Microsoft.Extensions.DependencyInjection adapter for TechTeaStudio.Injector.
 
 Adapters:
   * InjectorServiceProvider (IServiceProvider, IServiceProviderIsService, IServiceProviderIsKeyedService, IKeyedServiceProvider, IDisposable, IAsyncDisposable).

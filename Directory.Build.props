@@ -10,4 +10,49 @@
     <Copyright>Copyright © Tech Tea Studio 2026</Copyright>
     <RepositoryUrl>https://github.com/TechTeaStudio/Injector</RepositoryUrl>
   </PropertyGroup>
+
+  <!--
+    NuGet trust-signal build settings.
+
+    Scoping note: Directory.Build.props is imported very early (by Microsoft.Common.props),
+    BEFORE a project's own <PropertyGroup> body runs. So $(GeneratePackageOnBuild) is still
+    empty here and cannot be used as a guard inside this file. Intrinsic properties such as
+    $(MSBuildProjectName) ARE available during evaluation, so packable-only logic is keyed on
+    the two src package project names instead.
+  -->
+
+  <!-- Deterministic builds are safe everywhere. ContinuousIntegrationBuild changes source
+       path mapping, so only turn it on in CI (it would rewrite local dev paths otherwise). -->
+  <PropertyGroup>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <!-- SourceLink + symbol packages + source embedding: packable src projects only. -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'TechTeaStudio.Injector' Or '$(MSBuildProjectName)' == 'TechTeaStudio.Injector.Extensions.DependencyInjection'">
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'TechTeaStudio.Injector' Or '$(MSBuildProjectName)' == 'TechTeaStudio.Injector.Extensions.DependencyInjection'">
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!--
+    Package validation catches accidental breaking API changes against the last published
+    version. It downloads the baseline package from nuget.org, which can FAIL an offline
+    build/pack, so it is gated to CI only ($(GITHUB_ACTIONS) == 'true').
+    Baseline (0.1.0) applies to the CORE package only; the sidecar's first release is 0.3.0
+    and has no prior published baseline.
+  -->
+  <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true' And ('$(MSBuildProjectName)' == 'TechTeaStudio.Injector' Or '$(MSBuildProjectName)' == 'TechTeaStudio.Injector.Extensions.DependencyInjection')">
+    <EnablePackageValidation>true</EnablePackageValidation>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true' And '$(MSBuildProjectName)' == 'TechTeaStudio.Injector'">
+    <PackageValidationBaselineVersion>0.1.0</PackageValidationBaselineVersion>
+  </PropertyGroup>
+
 </Project>

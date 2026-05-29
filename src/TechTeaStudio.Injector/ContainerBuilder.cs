@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 
 namespace TechTeaStudio.Injector;
@@ -36,6 +37,8 @@ public sealed class ContainerBuilder : IContainerBuilder
     }
 
     /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public IRegistrationBuilder Register(Type serviceType, Type implementationType)
     {
         if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
@@ -54,6 +57,8 @@ public sealed class ContainerBuilder : IContainerBuilder
     }
 
     /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public IRegistrationBuilder Register(Type serviceType)
     {
         if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
@@ -101,6 +106,7 @@ public sealed class ContainerBuilder : IContainerBuilder
     }
 
     /// <inheritdoc />
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public IContainerBuilder RegisterAssembly(Assembly asm, Predicate<Type>? filter = null, Lifetime lifetime = Lifetime.Transient)
     {
         if (asm is null) throw new ArgumentNullException(nameof(asm));
@@ -129,9 +135,13 @@ public sealed class ContainerBuilder : IContainerBuilder
     }
 
     /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public IContainer Build() => Build(new BuildOptions());
 
     /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public IContainer Build(BuildOptions options)
     {
         if (options is null) throw new ArgumentNullException(nameof(options));
@@ -143,6 +153,10 @@ public sealed class ContainerBuilder : IContainerBuilder
         if (options.ValidateOnBuild)
         {
             container.ValidateAllRegistrations();
+        }
+        if (options.ValidateScopes)
+        {
+            container.ValidateNoCaptiveDependencies();
         }
         return container;
     }
@@ -212,6 +226,10 @@ public sealed class ContainerBuilder : IContainerBuilder
             return this;
         }
 
+        [UnconditionalSuppressMessage("AOT", "IL2026:RequiresUnreferencedCode",
+            Justification = "The IResolver.Resolve call is captured in a factory delegate that only runs at resolution time, which is itself gated by the [RequiresUnreferencedCode]-annotated public Resolve/Build entry points.")]
+        [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+            Justification = "The IResolver.Resolve call is captured in a factory delegate that only runs at resolution time, which is itself gated by the [RequiresDynamicCode]-annotated public Resolve/Build entry points.")]
         public IRegistrationBuilder As(params Type[] additionalServiceTypes)
         {
             if (additionalServiceTypes is null) throw new ArgumentNullException(nameof(additionalServiceTypes));

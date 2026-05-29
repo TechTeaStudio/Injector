@@ -4,7 +4,7 @@
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <RootNamespace>TechTeaStudio.Injector</RootNamespace>
     <AssemblyName>TechTeaStudio.Injector</AssemblyName>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
 
     <Description>Lightweight, expression-tree-compiled dependency injection container for .NET 8/9/10. From-scratch with no Microsoft.Extensions.DependencyInjection dependency. Open generics, decorators, Lazy/Func/Owned auto-resolution, lifecycle hooks (OnActivating / OnActivated), validate-on-build, async disposal, child scopes with extra registrations, modules, assembly scanning, keyed services, and IEnumerable / IReadOnlyDictionary collection injection.</Description>
     <PackageId>TechTeaStudio.Injector</PackageId>
@@ -14,6 +14,12 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
 
+    <!-- Turns on both the trimming (IL2xxx) and NativeAOT (IL3xxx) analyzers per-TFM so the
+         library's own code is checked. The container is intentionally NOT trim/AOT-safe; the public
+         entry points carry [RequiresDynamicCode]/[RequiresUnreferencedCode] so consumers get accurate
+         diagnostics, and the analyzers below verify that annotation coverage stays complete. -->
+    <IsAotCompatible>true</IsAotCompatible>
+
     <PackageProjectUrl>https://github.com/TechTeaStudio/Injector</PackageProjectUrl>
     <RepositoryType>git</RepositoryType>
 
@@ -22,18 +28,12 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
 
     <PackageReleaseNotes>
-v0.2.0 — Major feature wave bringing Autofac-style feature parity to the core container.
+v0.3.0: Captive-dependency detection and NativeAOT / trimming diagnostics.
 
 Added:
-  * Open generics: builder.Register(typeof(IRepo&lt;&gt;), typeof(Repo&lt;&gt;)) with on-demand closing.
-  * Lazy&lt;T&gt; / Func&lt;T&gt; / Func&lt;P, T&gt; auto-resolution; no registration needed.
-  * IAsyncDisposable on IContainer and IScope.
-  * Validate-on-build: builder.Build(new BuildOptions { ValidateOnBuild = true }).
-  * Owned&lt;T&gt; ownership transfer.
-  * OnActivating / OnActivated lifecycle hooks.
-  * Child scopes with extra registrations: scope.BeginLifetimeScope(b =&gt; ...).
-  * Compiled decorator activators (Expression-tree, cached per registration).
-  * Build-time decorator validation.
+  * ValidateScopes: builder.Build(new BuildOptions { ValidateScopes = true }) flags a singleton that captures a scoped service, directly or transitively, at build time. Throws CaptiveDependencyException, aggregated into one AggregateException. Mirrors MEDI's ValidateScopes; a transient captured by a singleton is tolerated.
+  * NativeAOT / trimming diagnostics: the public API carries [RequiresDynamicCode] / [RequiresUnreferencedCode] and the project enables the trim/AOT analyzers, so PublishAot / PublishTrimmed builds get accurate warnings. The container is expression-tree based and is not AOT/trim-safe at runtime.
+  * SourceLink, deterministic builds, and .snupkg symbol packages for source-stepping.
 
 For ASP.NET Core / Generic Host integration use the TechTeaStudio.Injector.Extensions.DependencyInjection sidecar package.
 

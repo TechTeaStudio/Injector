@@ -1,7 +1,31 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 
 namespace TechTeaStudio.Injector;
+
+/// <summary>
+/// Centralised messages for the trimming / NativeAOT analyzer attributes
+/// (<see cref="System.Diagnostics.CodeAnalysis.RequiresDynamicCodeAttribute"/> and
+/// <see cref="System.Diagnostics.CodeAnalysis.RequiresUnreferencedCodeAttribute"/>) attached to the
+/// public API. Kept in one place so every annotated entry point reports the same guidance.
+/// </summary>
+internal static class TrimmingMessages
+{
+    /// <summary>
+    /// Reason attached to <c>[RequiresDynamicCode]</c>: the container compiles expression trees at
+    /// runtime via <c>Expression.Compile()</c>, which NativeAOT cannot support.
+    /// </summary>
+    internal const string DynamicCode =
+        "TechTeaStudio.Injector compiles expression trees (Expression.Compile) to build per-registration activators; it is not compatible with NativeAOT. For AOT scenarios use a compile-time DI approach.";
+
+    /// <summary>
+    /// Reason attached to <c>[RequiresUnreferencedCode]</c>: the container discovers constructors,
+    /// properties, and methods reflectively, so the trimmer cannot statically prove which members are used.
+    /// </summary>
+    internal const string UnreferencedCode =
+        "TechTeaStudio.Injector uses reflection over constructors, properties, and methods at runtime; trimming may remove members it needs. It is not compatible with trimming. For AOT/trimmed scenarios use a compile-time DI approach.";
+}
 
 /// <summary>
 /// Helpers used by the resolution engine to compile activators, apply property / method injection,
@@ -14,6 +38,7 @@ internal static class Activators
     /// if every parameter type has a registration). Falls back to the parameterless one if present.
     /// Throws if no usable constructor exists.
     /// </summary>
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public static ConstructorInfo SelectConstructor(Type implementationType, Func<Type, bool> isResolvable)
     {
         var ctors = implementationType
@@ -48,6 +73,7 @@ internal static class Activators
     /// <summary>
     /// Enumerates settable instance properties marked with <see cref="InjectAttribute"/>.
     /// </summary>
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public static IEnumerable<PropertyInfo> GetInjectableProperties(Type t)
     {
         foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
@@ -61,6 +87,7 @@ internal static class Activators
     /// <summary>
     /// Enumerates public instance methods marked with <see cref="InjectAttribute"/>.
     /// </summary>
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public static IEnumerable<MethodInfo> GetInjectableMethods(Type t)
     {
         foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
@@ -75,6 +102,7 @@ internal static class Activators
     /// Builds an expression that creates an instance via the given constructor, then applies
     /// property and method injection.
     /// </summary>
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public static Expression BuildActivatorExpression(
         Type implementationType,
         ParameterExpression resolverParam,
@@ -122,6 +150,7 @@ internal static class Activators
     /// no property or method injection. Used when lifecycle hooks must fire between construction
     /// and post-construction injection.
     /// </summary>
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     public static Expression BuildConstructorOnlyExpression(
         Type implementationType,
         ParameterExpression resolverParam,

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using TechTeaStudio.Injector;
 
@@ -69,6 +70,10 @@ internal sealed class ScopedInjectorServiceProvider :
 
     internal IScope Scope => _scope;
 
+    [UnconditionalSuppressMessage("AOT", "IL2026:RequiresUnreferencedCode",
+        Justification = "Implements IServiceProvider.GetService, which carries no trimming annotations upstream. The wrapped Injector scope is not trim-safe; documented on the package and on the core's [RequiresUnreferencedCode] entry points.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Implements IServiceProvider.GetService, which carries no AOT annotations upstream. The wrapped Injector scope compiles expression trees and is not AOT-safe; documented on the package and on the core's [RequiresDynamicCode] entry points.")]
     public object? GetService(Type serviceType)
     {
         if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
@@ -115,6 +120,10 @@ internal sealed class ScopedInjectorServiceProvider :
         return KeyedResolutionHelpers.HasKeyedRegistration(_root, serviceType, serviceKey);
     }
 
+    [UnconditionalSuppressMessage("AOT", "IL2026:RequiresUnreferencedCode",
+        Justification = "Implements IKeyedServiceProvider.GetKeyedService, which carries no trimming annotations upstream. The wrapped Injector scope is not trim-safe; documented on the package and on the core's [RequiresUnreferencedCode] entry points.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Implements IKeyedServiceProvider.GetKeyedService, which carries no AOT annotations upstream. The wrapped Injector scope compiles expression trees and is not AOT-safe; documented on the package and on the core's [RequiresDynamicCode] entry points.")]
     public object? GetKeyedService(Type serviceType, object? serviceKey)
     {
         if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
@@ -143,6 +152,10 @@ internal sealed class ResolverServiceProvider : IServiceProvider, IKeyedServiceP
 
     public ResolverServiceProvider(IResolver resolver) => _resolver = resolver;
 
+    [UnconditionalSuppressMessage("AOT", "IL2026:RequiresUnreferencedCode",
+        Justification = "Implements IServiceProvider.GetService, which carries no trimming annotations upstream. The wrapped Injector resolver is not trim-safe; documented on the package and on the core's [RequiresUnreferencedCode] entry points.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Implements IServiceProvider.GetService, which carries no AOT annotations upstream. The wrapped Injector resolver compiles expression trees and is not AOT-safe; documented on the package and on the core's [RequiresDynamicCode] entry points.")]
     public object? GetService(Type serviceType)
     {
         if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
@@ -157,6 +170,10 @@ internal sealed class ResolverServiceProvider : IServiceProvider, IKeyedServiceP
         }
     }
 
+    [UnconditionalSuppressMessage("AOT", "IL2026:RequiresUnreferencedCode",
+        Justification = "Implements IKeyedServiceProvider.GetKeyedService, which carries no trimming annotations upstream. The wrapped Injector resolver is not trim-safe; documented on the package and on the core's [RequiresUnreferencedCode] entry points.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Implements IKeyedServiceProvider.GetKeyedService, which carries no AOT annotations upstream. The wrapped Injector resolver compiles expression trees and is not AOT-safe; documented on the package and on the core's [RequiresDynamicCode] entry points.")]
     public object? GetKeyedService(Type serviceType, object? serviceKey)
     {
         if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));

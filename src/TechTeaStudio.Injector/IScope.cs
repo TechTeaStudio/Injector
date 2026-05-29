@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace TechTeaStudio.Injector;
 
 /// <summary>
@@ -12,5 +14,7 @@ public interface IScope : IResolver, IDisposable, IAsyncDisposable
     /// same service type; disposing the child scope disposes only what the child owned.
     /// </summary>
     /// <param name="configure">Configuration callback used to register extra services on the child scope.</param>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
     IScope BeginLifetimeScope(Action<IContainerBuilder> configure);
 }

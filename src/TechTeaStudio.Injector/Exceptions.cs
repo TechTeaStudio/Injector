@@ -53,3 +53,32 @@ public sealed class RegistrationException : InjectorException
     /// <summary>Initializes a new instance with the given message.</summary>
     public RegistrationException(string message) : base(message) { }
 }
+
+/// <summary>
+/// Thrown when scope validation (<see cref="BuildOptions.ValidateScopes"/>) detects a captive
+/// dependency: a singleton service that captures a shorter-lived <see cref="Lifetime.Scoped"/>
+/// dependency through its constructor graph.
+/// </summary>
+public sealed class CaptiveDependencyException : InjectorException
+{
+    /// <summary>The singleton service type that would capture the scoped dependency.</summary>
+    public Type SingletonType { get; }
+
+    /// <summary>The scoped service type that gets captured by the singleton.</summary>
+    public Type CapturedScopedType { get; }
+
+    /// <summary>The ordered chain of service types from the singleton down to the captured scoped service.</summary>
+    public IReadOnlyList<Type> DependencyPath { get; }
+
+    /// <summary>Initializes a new instance for the given singleton, captured scoped type, and dependency path.</summary>
+    public CaptiveDependencyException(Type singletonType, Type capturedScopedType, IReadOnlyList<Type> dependencyPath)
+        : base($"Captive dependency detected: singleton '{singletonType.FullName}' depends on scoped service "
+            + $"'{capturedScopedType.FullName}' via [{string.Join(" -> ", dependencyPath.Select(t => t.FullName))}]. "
+            + "A singleton outlives every scope, so it would capture and reuse a single scoped instance for the "
+            + "lifetime of the container.")
+    {
+        SingletonType = singletonType;
+        CapturedScopedType = capturedScopedType;
+        DependencyPath = dependencyPath;
+    }
+}

@@ -3,6 +3,25 @@
 All notable changes to this project are documented here.
 Format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] — 2026-05-29
+
+**Sidecar** (`TechTeaStudio.Injector.Extensions.DependencyInjection`).
+
+### Added
+- NativeAOT / trimming diagnostics. The adapter enables the trim/AOT analyzers; methods implementing MEDI interfaces (not `Requires*`-annotated upstream) carry targeted `[UnconditionalSuppressMessage]` with justifications. The adapter drives the expression-tree-compiled core and is not trim/AOT-safe at runtime.
+
+## [0.3.0] — 2026-05-29
+
+**Core** (`TechTeaStudio.Injector`).
+
+### Added
+- **Captive-dependency detection.** Opt in via `builder.Build(new BuildOptions { ValidateScopes = true })` to flag a singleton that captures a scoped service, directly or transitively through its constructor parameters, at build time. Each offending singleton raises a `CaptiveDependencyException`; all are aggregated into one `AggregateException`. Mirrors MEDI's `ValidateScopes`; a transient captured by a singleton is tolerated. Open generics are skipped.
+- **NativeAOT / trimming diagnostics.** The public API is annotated with `[RequiresDynamicCode]` / `[RequiresUnreferencedCode]` and the project enables the trim/AOT analyzers, so compiling under `PublishAot` / `PublishTrimmed` surfaces accurate warnings instead of silent runtime failures. The container remains expression-tree based and is not AOT/trim-safe at runtime.
+- **SourceLink and symbol packages.** Packages now ship deterministic builds, `Microsoft.SourceLink.GitHub`, embedded untracked sources, and `.snupkg` symbol packages for source-stepping. CI builds set `ContinuousIntegrationBuild` and run NuGet package validation against the prior published baseline.
+
+### Internal
+- BenchmarkDotNet suite under `benchmarks/` comparing resolve and build throughput against MEDI and Autofac; results are published in the README.
+
 ## [0.2.0] — 2026-05-15
 
 Major feature wave aiming at Autofac feature parity plus closing the most-requested MEDI gaps.

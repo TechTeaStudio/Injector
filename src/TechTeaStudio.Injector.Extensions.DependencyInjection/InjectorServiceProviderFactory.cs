@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using TechTeaStudio.Injector;
 
@@ -39,6 +40,10 @@ public sealed class InjectorServiceProviderFactory : IServiceProviderFactory<ICo
     /// callbacks on the returned builder before <see cref="CreateServiceProvider"/> is called.
     /// </summary>
     /// <param name="services">Source service collection from the host.</param>
+    [UnconditionalSuppressMessage("AOT", "IL2026:RequiresUnreferencedCode",
+        Justification = "Implements IServiceProviderFactory<IContainerBuilder>.CreateBuilder, which carries no trimming annotations upstream. Seeding the builder is not trim-safe; documented on the package and on the core's [RequiresUnreferencedCode] entry points.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Implements IServiceProviderFactory<IContainerBuilder>.CreateBuilder, which carries no AOT annotations upstream. Seeding the builder compiles factory delegates and is not AOT-safe; documented on the package and on the core's [RequiresDynamicCode] entry points.")]
     public IContainerBuilder CreateBuilder(IServiceCollection services)
     {
         if (services is null) throw new ArgumentNullException(nameof(services));
@@ -54,6 +59,10 @@ public sealed class InjectorServiceProviderFactory : IServiceProviderFactory<ICo
     /// </summary>
     /// <param name="containerBuilder">Builder produced by <see cref="CreateBuilder"/> (and possibly
     /// mutated by host configuration callbacks).</param>
+    [UnconditionalSuppressMessage("AOT", "IL2026:RequiresUnreferencedCode",
+        Justification = "Implements IServiceProviderFactory<IContainerBuilder>.CreateServiceProvider, which carries no trimming annotations upstream. Building the container uses reflection and is not trim-safe; documented on the package and on the core's [RequiresUnreferencedCode] entry points.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Implements IServiceProviderFactory<IContainerBuilder>.CreateServiceProvider, which carries no AOT annotations upstream. Building the container compiles expression trees and is not AOT-safe; documented on the package and on the core's [RequiresDynamicCode] entry points.")]
     public IServiceProvider CreateServiceProvider(IContainerBuilder containerBuilder)
     {
         if (containerBuilder is null) throw new ArgumentNullException(nameof(containerBuilder));
