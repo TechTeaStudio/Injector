@@ -20,11 +20,22 @@ public sealed class ServiceNotRegisteredException : InjectorException
     /// <summary>The service type that could not be resolved.</summary>
     public Type ServiceType { get; }
 
+    /// <summary>The registration key that was requested, or <c>null</c> for an unkeyed resolve.</summary>
+    public object? Key { get; }
+
     /// <summary>Initializes a new instance for the given service type.</summary>
     public ServiceNotRegisteredException(Type serviceType)
         : base($"No registration found for service type '{serviceType.FullName}'.")
     {
         ServiceType = serviceType;
+    }
+
+    /// <summary>Initializes a new instance for the given service type and registration key.</summary>
+    public ServiceNotRegisteredException(Type serviceType, object key)
+        : base($"No registration found for service type '{serviceType.FullName}' with key '{key}'.")
+    {
+        ServiceType = serviceType;
+        Key = key;
     }
 }
 

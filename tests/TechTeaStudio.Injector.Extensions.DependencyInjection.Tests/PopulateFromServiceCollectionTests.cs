@@ -179,6 +179,41 @@ public class PopulateFromServiceCollectionTests
     }
 
     [Fact]
+    public void KeyedAndUnkeyed_SameServiceType_UnkeyedResolveIgnoresKeyed()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IFoo, Foo>();
+        services.AddKeyedSingleton<IFoo, FooAlt>("alt"); // registered last, but keyed
+
+        var builder = new ContainerBuilder();
+        builder.PopulateFromServiceCollection(services);
+        using var container = builder.Build();
+        var provider = container.AsServiceProvider();
+
+        // MEDI semantics: a keyed registration is never the default and never part of IEnumerable<T>.
+        Assert.IsType<Foo>(provider.GetRequiredService<IFoo>());
+        Assert.Single(provider.GetServices<IFoo>());
+        Assert.IsType<FooAlt>(provider.GetRequiredKeyedService<IFoo>("alt"));
+    }
+
+    [Fact]
+    public void KeyedOnly_UnkeyedGetService_ReturnsNullAndIsServiceFalse()
+    {
+        var services = new ServiceCollection();
+        services.AddKeyedSingleton<IFoo, Foo>("only");
+
+        var builder = new ContainerBuilder();
+        builder.PopulateFromServiceCollection(services);
+        using var container = builder.Build();
+        var provider = container.AsServiceProvider();
+
+        Assert.Null(provider.GetService<IFoo>());
+        Assert.Empty(provider.GetServices<IFoo>());
+        Assert.False(((IServiceProviderIsService)provider).IsService(typeof(IFoo)));
+        Assert.True(((IServiceProviderIsKeyedService)provider).IsKeyedService(typeof(IFoo), "only"));
+    }
+
+    [Fact]
     public void KeyedSingleton_ByType_ResolvedThroughKeyedServiceProvider()
     {
         var services = new ServiceCollection();

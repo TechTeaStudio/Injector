@@ -3,11 +3,11 @@ using TechTeaStudio.Injector;
 namespace TechTeaStudio.Injector.Tests;
 
 /// <summary>
-/// Open-generic decorator coverage. The public builder only exposes a generic
-/// <c>RegisterDecorator&lt;TService, TDecorator&gt;</c> (which cannot express an open-generic
-/// decorator), so these tests assemble the registration list directly via the internal
-/// <see cref="Registration"/> / <see cref="Container"/> API (visible through InternalsVisibleTo)
-/// to exercise the open-generic path in the decorator subsystem.
+/// Open-generic decorator coverage. The first group assembles the registration list directly via
+/// the internal <see cref="Registration"/> / <see cref="Container"/> API (visible through
+/// InternalsVisibleTo) to exercise the decorator subsystem in isolation; the <c>PublicApi_*</c>
+/// group goes through <c>RegisterDecorator(Type, Type)</c> on the public builder, including
+/// build-time validation.
 /// </summary>
 public class OpenGenericDecoratorsTests
 {
@@ -177,5 +177,86 @@ public class OpenGenericDecoratorsTests
         // No base registration for IRepository<User> (closed or open) -> must throw on build.
         b.RegisterDecorator<IRepository<User>, UserOnlyRepository>();
         Assert.Throws<RegistrationException>(() => b.Build());
+    }
+
+    // --- Public API: RegisterDecorator(Type, Type) ------------------------------------------------
+
+    [Fact]
+    public void PublicApi_OpenGenericDecorator_OverOpenGenericBase_Wraps()
+    {
+        IContainerBuilder b = new ContainerBuilder();
+        b.Register(typeof(IRepository<>), typeof(Repository<>));
+        b.RegisterDecorator(typeof(IRepository<>), typeof(LoggingRepository<>));
+        using var c = b.Build();
+
+        Assert.Equal("log(repo<User>)", c.Resolve<IRepository<User>>().Trace());
+        Assert.Equal("log(repo<Order>)", c.Resolve<IRepository<Order>>().Trace());
+    }
+
+    [Fact]
+    public void PublicApi_OpenGenericDecorators_ChainInRegistrationOrder()
+    {
+        IContainerBuilder b = new ContainerBuilder();
+        b.Register(typeof(IRepository<>), typeof(Repository<>));
+        b.RegisterDecorator(typeof(IRepository<>), typeof(LoggingRepository<>));
+        b.RegisterDecorator(typeof(IRepository<>), typeof(AuditRepository<>));
+        using var c = b.Build();
+
+        Assert.Equal("audit(log(repo<User>))", c.Resolve<IRepository<User>>().Trace());
+    }
+
+    [Fact]
+    public void PublicApi_OpenGenericDecorator_OverClosedOnlyBase_BuildsAndWraps()
+    {
+        IContainerBuilder b = new ContainerBuilder();
+        // Only the closed IRepository<User> is registered; the decorator is declared on IRepository<>.
+        b.Register<IRepository<User>, Repository<User>>();
+        b.RegisterDecorator(typeof(IRepository<>), typeof(LoggingRepository<>));
+        using var c = b.Build();
+
+        Assert.Equal("log(repo<User>)", c.Resolve<IRepository<User>>().Trace());
+        // No base for Order at all -> still unresolvable, the decorator does not conjure one.
+        Assert.Throws<ServiceNotRegisteredException>(() => c.Resolve<IRepository<Order>>());
+    }
+
+    [Fact]
+    public void PublicApi_OpenGenericDecorator_WithNoBaseAtAll_FailsValidation()
+    {
+        IContainerBuilder b = new ContainerBuilder();
+        b.RegisterDecorator(typeof(IRepository<>), typeof(LoggingRepository<>));
+        Assert.Throws<RegistrationException>(() => b.Build());
+    }
+
+    [Fact]
+    public void PublicApi_ClosedDecorator_ByType_Wraps()
+    {
+        IContainerBuilder b = new ContainerBuilder();
+        b.Register<IRepository<User>, Repository<User>>();
+        b.RegisterDecorator(typeof(IRepository<User>), typeof(UserOnlyRepository));
+        using var c = b.Build();
+
+        Assert.Equal("userOnly(repo<User>)", c.Resolve<IRepository<User>>().Trace());
+    }
+
+    public class NotARepository { }
+    public abstract class AbstractRepository<T> : IRepository<T>
+    {
+        public abstract string Trace();
+    }
+
+    [Fact]
+    public void PublicApi_RegisterDecorator_ValidatesArguments()
+    {
+        IContainerBuilder b = new ContainerBuilder();
+        Assert.Throws<ArgumentNullException>(() => b.RegisterDecorator(null!, typeof(LoggingRepository<>)));
+        Assert.Throws<ArgumentNullException>(() => b.RegisterDecorator(typeof(IRepository<>), null!));
+        // Mixed open/closed arity.
+        Assert.Throws<RegistrationException>(() => b.RegisterDecorator(typeof(IRepository<>), typeof(UserOnlyRepository)));
+        Assert.Throws<RegistrationException>(() => b.RegisterDecorator(typeof(IRepository<User>), typeof(LoggingRepository<>)));
+        // Decorator that does not implement the service.
+        Assert.Throws<RegistrationException>(() => b.RegisterDecorator(typeof(IRepository<User>), typeof(NotARepository)));
+        Assert.Throws<RegistrationException>(() => b.RegisterDecorator(typeof(IRepository<>), typeof(NotARepository)));
+        // Abstract decorator cannot be instantiated.
+        Assert.Throws<RegistrationException>(() => b.RegisterDecorator(typeof(IRepository<>), typeof(AbstractRepository<>)));
     }
 }

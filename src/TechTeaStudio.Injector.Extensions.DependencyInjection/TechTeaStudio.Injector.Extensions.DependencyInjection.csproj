@@ -1,10 +1,13 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<!-- TreatAsLocalProperty: see the note in TechTeaStudio.Injector.csproj. The Version property is
+     the single source of truth for the package version; a global /p:PackageVersion cannot override it. -->
+<Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="PackageVersion">
 
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <RootNamespace>TechTeaStudio.Injector.Extensions.DependencyInjection</RootNamespace>
     <AssemblyName>TechTeaStudio.Injector.Extensions.DependencyInjection</AssemblyName>
-    <Version>0.3.2</Version>
+    <Version>0.3.3</Version>
+    <PackageVersion>$(Version)</PackageVersion>
 
     <Description>Microsoft.Extensions.DependencyInjection adapter for TechTeaStudio.Injector. Plugs the Injector container into ASP.NET Core / Generic Host / EF Core via IServiceProvider, IServiceScope, IServiceScopeFactory, IServiceProviderFactory&lt;IContainerBuilder&gt;, IServiceProviderIsService, IServiceProviderIsKeyedService, IKeyedServiceProvider, and an IServiceCollection import helper.</Description>
     <PackageId>TechTeaStudio.Injector.Extensions.DependencyInjection</PackageId>
@@ -29,6 +32,8 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
 
     <PackageReleaseNotes>
+v0.3.3: Rebuilt against core 0.5.0. First version published to nuget.org after 0.3.0 (0.3.1 and 0.3.2 never shipped because CI failed). Fixes the package dependency: 0.3.0 declared a dependency on core 0.3.0, which was never published, so it could not be installed; 0.3.3 depends on core 0.5.0. Keyed services registered through PopulateFromServiceCollection now follow Microsoft.Extensions.DependencyInjection semantics: a keyed descriptor is never returned by GetService(Type) / GetServices&lt;T&gt;() and IsService(Type) ignores it; it stays reachable via GetKeyedService / GetRequiredKeyedService.
+
 v0.3.2: Rebuilt against core 0.4.0; the adapter exposes the new keyed/optional resolution and open-generic decorators. Documentation fix.
 
 v0.3.1: NativeAOT / trimming diagnostics. The adapter enables the trim/AOT analyzers; methods implementing MEDI interfaces carry targeted [UnconditionalSuppressMessage] with justifications. Not trim/AOT-safe at runtime (it drives the expression-tree-compiled core).

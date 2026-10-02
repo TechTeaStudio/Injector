@@ -31,8 +31,9 @@ builder.Register<IService, MyService>().AsScoped();
 builder.RegisterDecorator<IService, LoggingDecorator>();
 builder.RegisterAssembly(typeof(Program).Assembly, t => t.Name.EndsWith("Handler"));
 
-// Open generics:
+// Open generics (and an open-generic decorator over them):
 builder.Register(typeof(IRepository<>), typeof(Repository<>)).AsScoped();
+builder.RegisterDecorator(typeof(IRepository<>), typeof(LoggingRepository<>));
 
 // Lifecycle hook:
 builder.Register<IDbInit, DbInit>()
@@ -43,8 +44,9 @@ await using var container = builder.Build(new BuildOptions { ValidateOnBuild = t
 await using var scope     = container.CreateScope();
 
 var svc   = scope.Resolve<IService>();                // wrapped in LoggingDecorator
-var all   = scope.ResolveAll<IService>();             // every registration
-var byKey = scope.ResolveDictionary<string, IHandler>(); // keyed registrations
+var all   = scope.ResolveAll<IService>();             // every unkeyed registration
+var byKey = scope.ResolveDictionary<string, IHandler>(); // keyed registrations (WithKey) only
+var one   = scope.ResolveKeyed<IHandler>("alpha");    // a single keyed registration
 var repo  = scope.Resolve<IRepository<User>>();       // closed-on-demand from open generic
 var lazy  = scope.Resolve<Lazy<IService>>();          // auto-wrapped
 
@@ -111,6 +113,6 @@ using (var child = scope.BeginLifetimeScope(b => b.RegisterInstance(currentReque
 
 ## Exceptions
 - `CircularDependencyException` — graph cycle; the exception message lists the full dependency chain.
-- `ServiceNotRegisteredException` — requested type has no matching registration.
+- `ServiceNotRegisteredException` — requested type has no matching registration (for `ResolveKeyed`, no registration with that key; the message and `Key` name it).
 - `RegistrationException` — fluent API misuse (e.g., decorator without a base registration, duplicate keys).
 - `InjectorException` — base type for everything above.

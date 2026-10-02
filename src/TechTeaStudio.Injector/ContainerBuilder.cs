@@ -97,6 +97,54 @@ public sealed class ContainerBuilder : IContainerBuilder
     }
 
     /// <inheritdoc />
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    public IContainerBuilder RegisterDecorator(Type serviceType, Type decoratorType)
+    {
+        if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
+        if (decoratorType is null) throw new ArgumentNullException(nameof(decoratorType));
+        EnsureNotBuilt();
+
+        if (serviceType.IsGenericTypeDefinition ^ decoratorType.IsGenericTypeDefinition)
+        {
+            throw new RegistrationException(
+                $"Cannot register decorator '{decoratorType.FullName}' for '{serviceType.FullName}': both must be open generic type definitions, or neither.");
+        }
+        if (!decoratorType.IsClass || decoratorType.IsAbstract)
+        {
+            throw new RegistrationException(
+                $"Decorator '{decoratorType.FullName}' must be a concrete, non-abstract class.");
+        }
+        if (!DecoratorImplementsService(serviceType, decoratorType))
+        {
+            throw new RegistrationException(
+                $"Decorator '{decoratorType.FullName}' does not implement service type '{serviceType.FullName}'.");
+        }
+
+        var reg = Registration.ForDecorator(serviceType, decoratorType, _orderCounter++);
+        _registrations.Add(reg);
+        return this;
+    }
+
+    // Closed types use plain assignability. For open generics the decorator's own type parameters
+    // stand in for the service's, so compare generic type definitions across its bases / interfaces.
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    private static bool DecoratorImplementsService(Type serviceType, Type decoratorType)
+    {
+        if (!serviceType.IsGenericTypeDefinition) return serviceType.IsAssignableFrom(decoratorType);
+
+        for (var t = decoratorType; t is not null; t = t.BaseType)
+        {
+            if (t.IsGenericType && t.GetGenericTypeDefinition() == serviceType) return true;
+        }
+        foreach (var iface in decoratorType.GetInterfaces())
+        {
+            if (iface.IsGenericType && iface.GetGenericTypeDefinition() == serviceType) return true;
+        }
+        return false;
+    }
+
+    /// <inheritdoc />
     public IContainerBuilder RegisterModule(IModule module)
     {
         if (module is null) throw new ArgumentNullException(nameof(module));
@@ -186,10 +234,17 @@ public sealed class ContainerBuilder : IContainerBuilder
         // Each decorator must have at least one matching non-decorator registration for its service type.
         // For open-generic service types, accept any matching open-generic OR a matching closed registration.
         var nonDecoratorTypes = new HashSet<Type>();
+        // Generic definitions of every closed-generic base (IRepository<User> -> IRepository<>), so an
+        // open-generic decorator is satisfied by closed-only bases too.
+        var closedBaseDefinitions = new HashSet<Type>();
         foreach (var reg in _registrations)
         {
             if (reg.IsDecorator) continue;
             nonDecoratorTypes.Add(reg.ServiceType);
+            if (reg.ServiceType.IsConstructedGenericType)
+            {
+                closedBaseDefinitions.Add(reg.ServiceType.GetGenericTypeDefinition());
+            }
         }
 
         foreach (var reg in _registrations)
@@ -204,6 +259,13 @@ public sealed class ContainerBuilder : IContainerBuilder
             // open-generic base (IRepository<>), since the container closes that base on demand.
             if (reg.ServiceType.IsConstructedGenericType
                 && nonDecoratorTypes.Contains(reg.ServiceType.GetGenericTypeDefinition()))
+            {
+                continue;
+            }
+
+            // An open-generic decorator (on IRepository<>) is satisfied by any closed base of that
+            // definition (IRepository<User>); it wraps exactly those closed resolutions at runtime.
+            if (reg.ServiceType.IsGenericTypeDefinition && closedBaseDefinitions.Contains(reg.ServiceType))
             {
                 continue;
             }
@@ -242,6 +304,7 @@ public sealed class ContainerBuilder : IContainerBuilder
         public IRegistrationBuilder As(params Type[] additionalServiceTypes)
         {
             if (additionalServiceTypes is null) throw new ArgumentNullException(nameof(additionalServiceTypes));
+            var primary = _reg;
             var primaryService = _reg.ServiceType;
             foreach (var t in additionalServiceTypes)
             {
@@ -250,8 +313,13 @@ public sealed class ContainerBuilder : IContainerBuilder
 
                 // Alias resolves *through* the primary registration so they share its lifetime cache.
                 // Lifetime on the alias itself must be Transient — the singleton/scoped semantics live
-                // on the underlying registration that the factory delegates to.
-                var alias = Registration.ForFactory(t, r => r.Resolve(primaryService), Lifetime.Transient, _owner._orderCounter++);
+                // on the underlying registration that the factory delegates to. A keyed primary is
+                // only reachable by key, so the key is read at resolve time (WithKey may follow As).
+                var alias = Registration.ForFactory(
+                    t,
+                    r => primary.Key is null ? r.Resolve(primaryService) : r.ResolveKeyed(primaryService, primary.Key),
+                    Lifetime.Transient,
+                    _owner._orderCounter++);
                 if (_reg.Key is not null) alias.SetKey(_reg.Key);
                 _owner._registrations.Add(alias);
             }

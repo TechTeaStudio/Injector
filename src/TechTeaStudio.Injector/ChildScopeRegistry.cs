@@ -64,10 +64,39 @@ internal sealed class ChildScopeRegistry
         return false;
     }
 
+    /// <summary>
+    /// True when an unkeyed registration (closed or open-generic) can answer an unkeyed resolve of
+    /// <paramref name="serviceType"/>. Keyed registrations are reachable only by key.
+    /// </summary>
     public bool HasAnyRegistrationsFor(Type serviceType)
     {
-        if (_byServiceType.ContainsKey(serviceType)) return true;
-        if (serviceType.IsConstructedGenericType && _openGenericsByDef.ContainsKey(serviceType.GetGenericTypeDefinition())) return true;
+        if (_byServiceType.TryGetValue(serviceType, out var list) && list.Exists(static r => r.Key is null)) return true;
+        if (serviceType.IsConstructedGenericType
+            && _openGenericsByDef.TryGetValue(serviceType.GetGenericTypeDefinition(), out var openList)
+            && openList.Exists(static r => r.Key is null))
+        {
+            return true;
+        }
         return false;
+    }
+
+    /// <summary>
+    /// Finds the keyed registration for <paramref name="serviceType"/> + <paramref name="key"/>: a
+    /// closed one first, otherwise an open-generic one on the matching definition (returned
+    /// unclosed; the caller synthesizes the closed registration). <c>null</c> when nothing matches.
+    /// </summary>
+    public Registration? FindKeyed(Type serviceType, object key)
+    {
+        if (_byServiceType.TryGetValue(serviceType, out var list))
+        {
+            var closed = list.Find(r => r.Key is not null && r.Key.Equals(key));
+            if (closed is not null) return closed;
+        }
+        if (serviceType.IsConstructedGenericType
+            && _openGenericsByDef.TryGetValue(serviceType.GetGenericTypeDefinition(), out var openList))
+        {
+            return openList.Find(r => r.Key is not null && r.Key.Equals(key));
+        }
+        return null;
     }
 }

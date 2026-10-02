@@ -31,11 +31,27 @@ public sealed class Container : IContainer
     private readonly ConcurrentDictionary<Type, Func<IResolver, object>> _lazyActivatorCache = new();
     private readonly ConcurrentDictionary<Type, Func<IResolver, object>> _funcWithParamsActivatorCache = new();
 
-    private readonly Dictionary<Registration, object> _singletons = new();
-    // Per-registration single-construction guard for singletons (see FIX 2). Each Lazy<object> uses
-    // ExecutionAndPublication so concurrent resolvers share exactly one construction, and `.Value`
-    // is evaluated OUTSIDE _lock so a singleton ctor may safely re-enter the container.
-    private readonly Dictionary<Registration, Lazy<object>> _singletonFactories = new();
+    // Materialized singletons. A ConcurrentDictionary so the already-built hot path is lock-free;
+    // writes still happen under _lock (constructor pre-fill aside).
+    private readonly ConcurrentDictionary<Registration, object> _singletons = new();
+    // In-flight singleton constructions, one record per registration, guarded by _lock. The owning
+    // thread runs the user constructor OUTSIDE _lock (so it may re-enter the container); other
+    // threads wait on the record via Monitor.Wait(_lock). A record is removed when construction
+    // finishes, successfully or not, so a failed construction is retried by the next resolve.
+    private readonly Dictionary<Registration, SingletonBuild> _singletonBuilds = new();
+    // Thread id -> the singleton registration that thread is currently blocked on. Together with
+    // SingletonBuild.OwnerThreadId this forms a wait-for graph that is walked (under _lock) before
+    // blocking, so a cross-thread singleton cycle is reported instead of deadlocking.
+    private readonly Dictionary<int, Registration> _waitingOn = new();
+
+    private sealed class SingletonBuild
+    {
+        public SingletonBuild(int ownerThreadId) => OwnerThreadId = ownerThreadId;
+        public int OwnerThreadId { get; }
+        public bool Finished { get; set; }
+        public Exception? Error { get; set; }
+    }
+
     /// <summary>
     /// Owned instances kept for disposal at container teardown. The list preserves creation order
     /// (reversed at dispose time) and may contain entries that are <see cref="IDisposable"/>,
@@ -206,7 +222,7 @@ public sealed class Container : IContainer
         var resolved = ResolveKeyed(serviceType, key, scope);
         if (resolved is null)
         {
-            throw new ServiceNotRegisteredException(serviceType);
+            throw new ServiceNotRegisteredException(serviceType, key);
         }
         return resolved;
     }
@@ -223,7 +239,7 @@ public sealed class Container : IContainer
         if (key is null) throw new ArgumentNullException(nameof(key));
         // FindKeyedRegistration is the same lookup ResolveKeyed performs; checking first keeps a
         // genuine activation failure (thrown by Activate) propagating instead of being swallowed.
-        if (FindKeyedRegistration(serviceType, key) is null)
+        if (FindKeyedRegistration(serviceType, key, scope, out _) is null)
         {
             value = null;
             return false;
@@ -275,16 +291,26 @@ public sealed class Container : IContainer
         // A child scope in the chain may carry an extra registration for this type.
         if (scope is not null && ScopeChainHas(serviceType, scope)) return true;
 
-        // Built-in collection / synthetic generic support (IEnumerable<>, IReadOnly*, IDictionary<>,
-        // Lazy<>, Func<...>, Owned<>) — these always resolve even with zero user registrations.
+        // Built-in collection support (IEnumerable<>, IReadOnly*, IDictionary<>) — these always
+        // resolve even with zero user registrations.
         if (serviceType.IsGenericType)
         {
             var def = serviceType.GetGenericTypeDefinition();
             if (def == typeof(IEnumerable<>) || def == typeof(IReadOnlyCollection<>) || def == typeof(IReadOnlyList<>)
-                || def == typeof(IDictionary<,>) || def == typeof(IReadOnlyDictionary<,>)
-                || def == typeof(Lazy<>)
-                || def == typeof(Owned<>)
-                || (def.FullName is { } name && name.StartsWith("System.Func`", StringComparison.Ordinal)))
+                || def == typeof(IDictionary<,>) || def == typeof(IReadOnlyDictionary<,>))
+            {
+                return true;
+            }
+
+            // Synthetic wrappers: Lazy<T> / Func<T> / Owned<T> resolve exactly when T does (Owned<T>
+            // constructs eagerly and would otherwise throw; Lazy<T>/Func<T> would fail later on use).
+            // Func<P, T> is always synthesizable since the caller supplies the missing parameters.
+            var args = serviceType.GetGenericArguments();
+            if (def == typeof(Lazy<>) || def == typeof(Owned<>) || def == typeof(Func<>))
+            {
+                return CanResolveTopLevel(args[0], scope);
+            }
+            if (def.FullName is { } name && name.StartsWith("System.Func`", StringComparison.Ordinal) && args.Length >= 2)
             {
                 return true;
             }
@@ -329,11 +355,11 @@ public sealed class Container : IContainer
                 return fromChildFast!;
             }
 
-            var directRegs = GetRegistrations(serviceType);
-            if (directRegs.Count > 0)
+            // Last-registered unkeyed wins for a single resolve (MEDI convention; keyed registrations
+            // are reachable only through ResolveKeyed / ResolveDictionary).
+            if (LastUnkeyed(GetRegistrations(serviceType)) is { } directReg)
             {
-                // Last-registered wins for a single resolve (MEDI convention).
-                return Activate(directRegs[^1], scope, new HashSet<Type>(), new Stack<Type>());
+                return Activate(directReg, scope, new HashSet<Type>(), new Stack<Type>());
             }
 
             // Unregistered non-generic type: only the built-in resolver/scope/container params or
@@ -353,8 +379,9 @@ public sealed class Container : IContainer
         // Child-scope-first lookup: walk the scope chain and pick the closest registration.
         if (scope is not null && TryResolveFromScopeChain(serviceType, scope, out var fromChild)) return fromChild!;
 
-        var registrations = GetRegistrations(serviceType);
-        if (registrations.Count == 0)
+        // Last-registered unkeyed wins for a single resolve (Microsoft.Extensions.DependencyInjection convention).
+        var reg = LastUnkeyed(GetRegistrations(serviceType));
+        if (reg is null)
         {
             // Synthetic Lazy<T> / Func<T> / Func<P,T> resolution: only kicks in when the
             // exact type is unregistered. A user-supplied registration always wins.
@@ -371,9 +398,46 @@ public sealed class Container : IContainer
             throw new ServiceNotRegisteredException(serviceType);
         }
 
-        // Last-registered wins for a single resolve (Microsoft.Extensions.DependencyInjection convention).
-        var reg = registrations[^1];
         return Activate(reg, scope, new HashSet<Type>(), new Stack<Type>());
+    }
+
+    // Keyed registrations never answer an unkeyed resolve, so "last registered wins" means the last
+    // registration without a key.
+    private static Registration? LastUnkeyed(List<Registration> regs)
+    {
+        for (var i = regs.Count - 1; i >= 0; i--)
+        {
+            if (regs[i].Key is null) return regs[i];
+        }
+        return null;
+    }
+
+    // Closes an open-generic registration over the requested closed service type, carrying over the
+    // lifetime, key, and lifecycle hooks. Shared by the container-level synthesis in GetRegistrations
+    // and the on-the-fly child-scope / keyed paths.
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    private static Registration CloseOpenGeneric(Registration openReg, Type serviceType)
+    {
+        var openImpl = openReg.ImplementationType
+            ?? throw new InjectorException($"Open-generic registration for '{openReg.ServiceType.FullName}' has no implementation type.");
+        Type closedImpl;
+        try
+        {
+            closedImpl = openImpl.MakeGenericType(serviceType.GenericTypeArguments);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new InjectorException(
+                $"Cannot close open-generic implementation '{openImpl.FullName}' for service '{serviceType.FullName}': {ex.Message}",
+                ex);
+        }
+
+        var closed = Registration.ForType(serviceType, closedImpl, openReg.Lifetime, openReg.Order);
+        if (openReg.Key is not null) closed.SetKey(openReg.Key);
+        // Copy over lifecycle hooks if any.
+        closed.CopyLifecycleHooksFrom(openReg);
+        return closed;
     }
 
     [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
@@ -387,23 +451,17 @@ public sealed class Container : IContainer
             var extra = current.Extra;
             if (extra is not null)
             {
-                if (extra.TryGet(serviceType, out var regs) && regs is not null && regs.Count > 0)
+                if (extra.TryGet(serviceType, out var regs) && regs is not null && LastUnkeyed(regs) is { } reg)
                 {
-                    value = Activate(regs[^1], current, new HashSet<Type>(), new Stack<Type>());
+                    value = Activate(reg, current, new HashSet<Type>(), new Stack<Type>());
                     return true;
                 }
                 if (serviceType.IsConstructedGenericType
                     && extra.TryGetOpenGeneric(serviceType.GetGenericTypeDefinition(), out var openList)
-                    && openList is not null && openList.Count > 0)
+                    && openList is not null && LastUnkeyed(openList) is { } openReg)
                 {
                     // Materialize a closed registration on the fly, similar to the container-level path.
-                    var openReg = openList[^1];
-                    var openImpl = openReg.ImplementationType!;
-                    var closedImpl = openImpl.MakeGenericType(serviceType.GenericTypeArguments);
-                    var closed = Registration.ForType(serviceType, closedImpl, openReg.Lifetime, openReg.Order);
-                    if (openReg.Key is not null) closed.SetKey(openReg.Key);
-                    closed.CopyLifecycleHooksFrom(openReg);
-                    value = Activate(closed, current, new HashSet<Type>(), new Stack<Type>());
+                    value = Activate(CloseOpenGeneric(openReg, serviceType), current, new HashSet<Type>(), new Stack<Type>());
                     return true;
                 }
             }
@@ -573,9 +631,8 @@ public sealed class Container : IContainer
         EnsureNotDisposed();
         // If targetType is an interface or has registrations, prefer the registered implementation.
         Type implType = targetType;
-        if (_byServiceType.TryGetValue(targetType, out var regs) && regs.Count > 0)
+        if (_byServiceType.TryGetValue(targetType, out var regs) && LastUnkeyed(regs) is { } first)
         {
-            var first = regs[^1];
             if (first.ImplementationType is not null) implType = first.ImplementationType;
         }
         // Pick the greediest ctor where the leading params match paramTypes and the rest are resolvable.
@@ -587,8 +644,7 @@ public sealed class Container : IContainer
         bool IsResolvable(Type t)
         {
             if (t == typeof(IResolver) || t == typeof(IContainer) || t == typeof(IScope)) return true;
-            if (_byServiceType.ContainsKey(t)) return true;
-            if (t.IsConstructedGenericType && _openGenericsByDef.ContainsKey(t.GetGenericTypeDefinition())) return true;
+            if (IsRegisteredInternal(t)) return true;
             if (t.IsGenericType)
             {
                 var d = t.GetGenericTypeDefinition();
@@ -673,6 +729,7 @@ public sealed class Container : IContainer
         var results = new List<object>(regs.Count);
         foreach (var reg in regs)
         {
+            if (reg.Key is not null) continue; // keyed registrations belong to ResolveDictionary.
             results.Add(Activate(reg, scope, new HashSet<Type>(), new Stack<Type>()));
         }
         // Include child-scope extras (outermost child first to mirror registration semantics).
@@ -690,6 +747,7 @@ public sealed class Container : IContainer
                 {
                     foreach (var reg in extraRegs)
                     {
+                        if (reg.Key is not null) continue;
                         results.Add(Activate(reg, chain[i], new HashSet<Type>(), new Stack<Type>()));
                     }
                 }
@@ -782,25 +840,7 @@ public sealed class Container : IContainer
                     var synthesized = new List<Registration>(openList.Count);
                     foreach (var openReg in openList)
                     {
-                        var openImpl = openReg.ImplementationType
-                            ?? throw new InjectorException($"Open-generic registration for '{openReg.ServiceType.FullName}' has no implementation type.");
-                        Type closedImpl;
-                        try
-                        {
-                            closedImpl = openImpl.MakeGenericType(serviceType.GenericTypeArguments);
-                        }
-                        catch (ArgumentException ex)
-                        {
-                            throw new InjectorException(
-                                $"Cannot close open-generic implementation '{openImpl.FullName}' for service '{serviceType.FullName}': {ex.Message}",
-                                ex);
-                        }
-
-                        var closed = Registration.ForType(serviceType, closedImpl, openReg.Lifetime, openReg.Order);
-                        if (openReg.Key is not null) closed.SetKey(openReg.Key);
-                        // Copy over lifecycle hooks if any.
-                        closed.CopyLifecycleHooksFrom(openReg);
-                        synthesized.Add(closed);
+                        synthesized.Add(CloseOpenGeneric(openReg, serviceType));
                     }
 
                     _byServiceType[serviceType] = synthesized;
@@ -893,46 +933,11 @@ public sealed class Container : IContainer
         switch (reg.Lifetime)
         {
             case Lifetime.Singleton:
-            {
-                // Fast path: already-materialized singleton (includes RegisterInstance singletons
-                // pre-filled in the constructor).
-                lock (_lock)
-                {
-                    if (_singletons.TryGetValue(reg, out var existing)) return existing;
-                }
-
-                // Get-or-create a per-registration Lazy<object> so concurrent resolvers share a
-                // single construction. Only the cheap factory bookkeeping happens under _lock; the
-                // actual user constructor runs when .Value is read OUTSIDE the lock, so a singleton
-                // ctor that resolves another service can safely re-enter the container.
-                Lazy<object> lazy;
-                lock (_lock)
-                {
-                    if (!_singletonFactories.TryGetValue(reg, out lazy!))
-                    {
-                        lazy = new Lazy<object>(
-                            () => CreateInstance(reg, scope, visiting, chain),
-                            LazyThreadSafetyMode.ExecutionAndPublication);
-                        _singletonFactories[reg] = lazy;
-                    }
-                }
-
-                // Runs the constructor at most once across all threads (and at most once total).
-                var singleton = lazy.Value;
-
-                // Publish + register for disposal exactly once. Re-entrancy (a singleton ctor that
-                // resolves the same singleton) lands here twice for one Lazy; the membership check
-                // keeps _ownedDisposables free of duplicates.
-                lock (_lock)
-                {
-                    if (!_singletons.ContainsKey(reg))
-                    {
-                        _singletons[reg] = singleton;
-                        if (DisposalHelpers.IsTrackable(singleton)) _ownedDisposables.Add(singleton);
-                    }
-                }
-                return singleton;
-            }
+                // Lock-free fast path: already-materialized singleton (includes RegisterInstance
+                // singletons pre-filled in the constructor).
+                return _singletons.TryGetValue(reg, out var existing)
+                    ? existing
+                    : BuildSingleton(reg, scope, visiting, chain);
 
             case Lifetime.Scoped:
                 if (scope is null)
@@ -949,6 +954,136 @@ public sealed class Container : IContainer
                 else if (scope is null && DisposalHelpers.IsTrackable(t)) lock (_lock) { _ownedDisposables.Add(t); }
                 return t;
         }
+    }
+
+    /// <summary>
+    /// Slow path for a singleton that has not been materialized yet. Exactly one thread (the owner)
+    /// runs the constructor, outside <c>_lock</c>; concurrent resolvers of the same registration wait
+    /// for it and share its outcome. A failure is not cached: the owner's exception is handed to the
+    /// threads already waiting, the build record is dropped, and the next resolve constructs again.
+    /// Unrelated singletons never serialize on each other — the lock only guards the bookkeeping.
+    /// </summary>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    private object BuildSingleton(Registration reg, Scope? scope, HashSet<Type> visiting, Stack<Type> chain)
+    {
+        var threadId = Environment.CurrentManagedThreadId;
+        SingletonBuild build;
+        lock (_lock)
+        {
+            // Re-check under the lock: another thread may have published between the fast path and here.
+            if (_singletons.TryGetValue(reg, out var existing)) return existing;
+
+            if (_singletonBuilds.TryGetValue(reg, out var inProgress))
+            {
+                // Same thread re-entering a singleton it is still constructing: a dependency cycle.
+                // The ambient chain in CreateInstance cannot catch this for factory registrations, and
+                // for type registrations it would only fire after a second (pointless) construction.
+                if (inProgress.OwnerThreadId == threadId)
+                {
+                    throw new CircularDependencyException(SnapshotCycle(reg));
+                }
+
+                // Another thread owns the construction. Before blocking, walk the wait-for graph: if
+                // the owner is (transitively) waiting on a singleton THIS thread is constructing, the
+                // two would wait on each other forever.
+                if (WaitWouldDeadlock(reg, inProgress, threadId, out var cycle))
+                {
+                    throw new CircularDependencyException(cycle);
+                }
+
+                _waitingOn[threadId] = reg;
+                try
+                {
+                    while (!inProgress.Finished) Monitor.Wait(_lock);
+                }
+                finally
+                {
+                    _waitingOn.Remove(threadId);
+                }
+
+                if (inProgress.Error is not null)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(inProgress.Error).Throw();
+                }
+                return _singletons[reg];
+            }
+
+            build = new SingletonBuild(threadId);
+            _singletonBuilds[reg] = build;
+        }
+
+        // We own the construction; the user constructor runs outside the lock so it may re-enter
+        // the container (resolve other singletons, open scopes, ...).
+        object singleton;
+        try
+        {
+            singleton = CreateInstance(reg, scope, visiting, chain);
+        }
+        catch (Exception ex)
+        {
+            lock (_lock)
+            {
+                _singletonBuilds.Remove(reg);
+                build.Error = ex;
+                build.Finished = true;
+                Monitor.PulseAll(_lock);
+            }
+            throw;
+        }
+
+        lock (_lock)
+        {
+            _singletons[reg] = singleton;
+            if (DisposalHelpers.IsTrackable(singleton)) _ownedDisposables.Add(singleton);
+            _singletonBuilds.Remove(reg);
+            build.Finished = true;
+            Monitor.PulseAll(_lock);
+        }
+        return singleton;
+    }
+
+    // Walks owner -> (what that owner is waiting on) -> its owner -> ... starting from `build`, the
+    // in-flight construction of `reg`. Returns true when the walk reaches `threadId`, i.e. blocking
+    // on `build` would close a cycle. Must be called under _lock. `cycle` lists what the current
+    // thread is itself constructing (ambient chain) followed by the service types along the walk,
+    // so the chain reads like the single-threaded one (A -> B -> A).
+    private bool WaitWouldDeadlock(Registration reg, SingletonBuild build, int threadId, out Type[] cycle)
+    {
+        var path = new List<Type> { reg.ServiceType };
+        var seen = new HashSet<int>();
+        var current = build;
+        while (true)
+        {
+            if (current.OwnerThreadId == threadId)
+            {
+                var chain = _resolvingChain is { } ambient ? ambient.Reverse().ToList() : new List<Type>();
+                chain.AddRange(path);
+                cycle = chain.ToArray();
+                return true;
+            }
+            // A thread that is not waiting on anything will eventually finish; so will one we have
+            // already visited (its wait-for edge was followed once, no new cycle through us).
+            if (!seen.Add(current.OwnerThreadId)
+                || !_waitingOn.TryGetValue(current.OwnerThreadId, out var waitReg)
+                || !_singletonBuilds.TryGetValue(waitReg, out var next))
+            {
+                cycle = Array.Empty<Type>();
+                return false;
+            }
+            path.Add(waitReg.ServiceType);
+            current = next;
+        }
+    }
+
+    // Chain reported for a same-thread singleton re-entry: everything this thread is constructing
+    // (ambient chain, outermost first) closed by the registration being re-entered.
+    private static Type[] SnapshotCycle(Registration reg)
+    {
+        var snapshot = _resolvingChain is { } ambient ? ambient.Reverse().ToList() : new List<Type>();
+        if (snapshot.Count == 0 || snapshot[0] != reg.ServiceType) snapshot.Insert(0, reg.ServiceType);
+        snapshot.Add(reg.ServiceType);
+        return snapshot.ToArray();
     }
 
     [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
@@ -1043,8 +1178,7 @@ public sealed class Container : IContainer
     private bool BuiltInIsResolvable(Type t)
     {
         if (t == typeof(IResolver) || t == typeof(IContainer) || t == typeof(IScope)) return true;
-        if (_byServiceType.ContainsKey(t)) return true;
-        if (t.IsConstructedGenericType && _openGenericsByDef.ContainsKey(t.GetGenericTypeDefinition())) return true;
+        if (IsRegisteredInternal(t)) return true;
         if (t.IsGenericType)
         {
             var def = t.GetGenericTypeDefinition();
@@ -1085,8 +1219,7 @@ public sealed class Container : IContainer
         bool IsResolvable(Type t)
         {
             if (t == typeof(IResolver) || t == typeof(IContainer) || t == typeof(IScope)) return true;
-            if (_byServiceType.ContainsKey(t)) return true;
-            if (t.IsConstructedGenericType && _openGenericsByDef.ContainsKey(t.GetGenericTypeDefinition())) return true;
+            if (IsRegisteredInternal(t)) return true;
             if (t.IsGenericType)
             {
                 var def = t.GetGenericTypeDefinition();
@@ -1225,20 +1358,22 @@ public sealed class Container : IContainer
     }
 
     /// <summary>
-    /// Returns true if at least one non-decorator registration of <paramref name="serviceType"/>
-    /// (closed or open-generic) is present. Used by the MEDI adapter's
-    /// <c>IServiceProviderIsService.IsService</c> implementation.
+    /// Returns true if at least one unkeyed, non-decorator registration of <paramref name="serviceType"/>
+    /// (closed or open-generic) is present, i.e. an unkeyed <c>Resolve</c> would find a registration.
+    /// Keyed registrations are reachable only by key (see <see cref="IsRegisteredInternal(Type, object)"/>).
+    /// Used by the MEDI adapter's <c>IServiceProviderIsService.IsService</c> implementation.
     /// </summary>
     internal bool IsRegisteredInternal(Type serviceType)
     {
         if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
-        if (_byServiceType.TryGetValue(serviceType, out var list) && list.Count > 0)
+        // The by-type bucket excludes decorators, so any unkeyed entry is enough.
+        if (_byServiceType.TryGetValue(serviceType, out var list) && list.Exists(static r => r.Key is null))
         {
-            // Any non-decorator registration is enough; the by-type bucket excludes decorators.
             return true;
         }
         if (serviceType.IsConstructedGenericType
-            && _openGenericsByDef.ContainsKey(serviceType.GetGenericTypeDefinition()))
+            && _openGenericsByDef.TryGetValue(serviceType.GetGenericTypeDefinition(), out var openList)
+            && openList.Exists(static r => r.Key is null))
         {
             return true;
         }
@@ -1264,24 +1399,54 @@ public sealed class Container : IContainer
     internal IEnumerable<Registration> GetAllRegistrations() => _registrations;
 
     /// <summary>
-    /// Finds a single non-decorator registration whose <c>ServiceType</c> matches
-    /// <paramref name="serviceType"/> and whose <c>Key</c> equals <paramref name="key"/>. Returns
-    /// the first such registration in declaration order or <c>null</c> when nothing matches.
+    /// Finds the container-level non-decorator registration whose <c>ServiceType</c> matches
+    /// <paramref name="serviceType"/> and whose <c>Key</c> equals <paramref name="key"/>. With no
+    /// closed registrations for a constructed generic, the keyed open-generic definition is returned
+    /// instead (same closed-over-open precedence as <see cref="GetRegistrations"/>); callers that
+    /// activate it close it first. Returns <c>null</c> when nothing matches.
     /// </summary>
     internal Registration? FindKeyedRegistration(Type serviceType, object key)
     {
         if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
         if (key is null) throw new ArgumentNullException(nameof(key));
-        foreach (var reg in _registrations)
+        // Keys are unique per service type (ValidateKeys), so the first match is the only one.
+        if (_byServiceType.TryGetValue(serviceType, out var list))
         {
-            if (reg.IsDecorator) continue;
-            if (reg.IsOpenGeneric) continue;
-            if (reg.ServiceType != serviceType) continue;
-            if (reg.Key is null) continue;
-            if (!reg.Key.Equals(key)) continue;
-            return reg;
+            return list.Find(r => r.Key is not null && r.Key.Equals(key));
+        }
+        if (serviceType.IsConstructedGenericType
+            && _openGenericsByDef.TryGetValue(serviceType.GetGenericTypeDefinition(), out var openList))
+        {
+            return openList.Find(r => r.Key is not null && r.Key.Equals(key));
         }
         return null;
+    }
+
+    /// <summary>
+    /// Scope-aware keyed lookup: walks the child-scope chain inner-most first (a child registration
+    /// shadows the container, as for unkeyed resolution), then falls back to
+    /// <see cref="FindKeyedRegistration(Type, object)"/>. <paramref name="owner"/> is the scope whose
+    /// extra registry supplied the match, or <c>null</c> for a container-level registration.
+    /// </summary>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    internal Registration? FindKeyedRegistration(Type serviceType, object key, Scope? scope, out Scope? owner)
+    {
+        if (serviceType is null) throw new ArgumentNullException(nameof(serviceType));
+        if (key is null) throw new ArgumentNullException(nameof(key));
+        for (var current = scope; current is not null; current = current.Parent)
+        {
+            if (current.Extra is { } extra && extra.FindKeyed(serviceType, key) is { } found)
+            {
+                owner = current;
+                // Materialize a closed registration on the fly, similar to the container-level path.
+                return found.IsOpenGeneric ? CloseOpenGeneric(found, serviceType) : found;
+            }
+        }
+        owner = null;
+        // GetRegistrations synthesizes and caches the closed registrations of a keyed open generic,
+        // so the same Registration identity (and hence the same singleton) is returned every time.
+        return GetRegistrations(serviceType).Find(r => r.Key is not null && r.Key.Equals(key));
     }
 
     /// <summary>
@@ -1293,9 +1458,10 @@ public sealed class Container : IContainer
     internal object? ResolveKeyed(Type serviceType, object key, Scope? scope)
     {
         EnsureNotDisposed();
-        var reg = FindKeyedRegistration(serviceType, key);
+        var reg = FindKeyedRegistration(serviceType, key, scope, out var owner);
         if (reg is null) return null;
-        return Activate(reg, scope, new HashSet<Type>(), new Stack<Type>());
+        // A child-scope registration activates against the scope that declared it, as unkeyed does.
+        return Activate(reg, owner ?? scope, new HashSet<Type>(), new Stack<Type>());
     }
 
     /// <summary>
@@ -1387,15 +1553,14 @@ public sealed class Container : IContainer
         {
             var depType = p.ParameterType;
 
-            // Resolve the dependency to its winning registration (last-registered-wins, like Resolve).
-            if (!_byServiceType.TryGetValue(depType, out var depRegs) || depRegs.Count == 0)
+            // Resolve the dependency to its winning registration (last-registered-unkeyed-wins, like Resolve).
+            if (!_byServiceType.TryGetValue(depType, out var depRegs) || LastUnkeyed(depRegs) is not { } depReg)
             {
                 // Unregistered, built-in, or synthetic (IEnumerable<>, Lazy<>, Func<>, IResolver, ...).
                 // Captive detection only reasons about plain registered dependencies.
                 continue;
             }
 
-            var depReg = depRegs[^1];
             path.Add(depType);
 
             if (depReg.Lifetime == Lifetime.Scoped)
@@ -1445,7 +1610,8 @@ public sealed class Container : IContainer
             snapshot = new List<object>(_ownedDisposables);
             _ownedDisposables.Clear();
             _singletons.Clear();
-            _singletonFactories.Clear();
+            _singletonBuilds.Clear();
+            _waitingOn.Clear();
             _activatorCache.Clear();
             _ctorOnlyActivatorCache.Clear();
             _funcActivatorCache.Clear();
@@ -1471,7 +1637,8 @@ public sealed class Container : IContainer
             snapshot = new List<object>(_ownedDisposables);
             _ownedDisposables.Clear();
             _singletons.Clear();
-            _singletonFactories.Clear();
+            _singletonBuilds.Clear();
+            _waitingOn.Clear();
             _activatorCache.Clear();
             _ctorOnlyActivatorCache.Clear();
             _funcActivatorCache.Clear();

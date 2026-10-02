@@ -72,6 +72,18 @@ public interface IContainerBuilder
         where TService : class;
 
     /// <summary>
+    /// Registers a decorator using runtime <see cref="Type"/> references. Required for open-generic
+    /// decorators such as <c>RegisterDecorator(typeof(IRepository&lt;&gt;), typeof(LoggingRepository&lt;&gt;))</c>,
+    /// which wrap every closed resolution of the service (whether the base was registered open or closed).
+    /// Both arguments must be open generic type definitions, or neither.
+    /// </summary>
+    /// <param name="serviceType">Service contract being decorated (may be an open generic type definition).</param>
+    /// <param name="decoratorType">Decorator type (may be an open generic type definition). Must implement the service and accept it in its constructor.</param>
+    [RequiresDynamicCode(TrimmingMessages.DynamicCode)]
+    [RequiresUnreferencedCode(TrimmingMessages.UnreferencedCode)]
+    IContainerBuilder RegisterDecorator(Type serviceType, Type decoratorType);
+
+    /// <summary>
     /// Invokes <see cref="IModule.Register(IContainerBuilder)"/> on the supplied module.
     /// </summary>
     /// <param name="module">Module to install.</param>

@@ -3,6 +3,38 @@
 All notable changes to this project are documented here.
 Format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-10-02
+
+**Core** (`TechTeaStudio.Injector`). Release-blocking engine fixes and keyed-service semantics.
+
+Core versions 0.3.0 and 0.4.0 were never published to nuget.org (the CI publish step failed on a package-validation baseline that does not exist), so 0.5.0 is the first published core version after 0.2.0 and ships everything listed under 0.3.0 and 0.4.0 as well.
+
+### Added
+- **`RegisterDecorator(Type serviceType, Type decoratorType)`** on `IContainerBuilder`. Open-generic decorators (`RegisterDecorator(typeof(IRepository<>), typeof(LoggingRepository<>))`) are now reachable from the public API; 0.4.0 advertised the feature but only exposed the generic `RegisterDecorator<TService, TDecorator>()`, which cannot express an open generic. Both arguments must be open generic definitions or neither; the decorator must be a concrete class implementing the service.
+- An open-generic decorator now also wraps **closed-only base registrations** (only `IRepository<User>` registered, decorator declared on `IRepository<>`); previously `Build()` rejected that with `RegistrationException`.
+- **`ServiceNotRegisteredException.Key`**; the keyed-miss message names the requested key.
+
+### Fixed
+- **Failed singleton construction is no longer cached.** 0.4.0's per-registration `Lazy<object>` cached the exception forever; a singleton whose constructor or factory throws is now retried on the next resolve, while concurrent resolvers of the same singleton still share exactly one construction.
+- **Singleton cycles throw `CircularDependencyException`.** A same-thread cycle between singletons surfaced as `InvalidOperationException` (re-entrant `Lazy.Value`) in 0.4.0; it now reports the usual chain, for type and factory registrations alike. A cross-thread singleton cycle (thread 1 builds A which needs B while thread 2 builds B which needs A) is detected through a wait-for graph and reported as `CircularDependencyException` instead of deadlocking. Unrelated singletons never serialize on each other's constructor.
+- **`ResolveKeyed` / `TryResolveKeyed`** now find keyed open-generic registrations (closed on demand, same as unkeyed resolution) and keyed registrations added to a child scope via `BeginLifetimeScope(b => b.Register<IFoo, Foo>().WithKey("k"))`; a child-scope registration shadows the container, as for unkeyed resolution.
+- **`TryResolve` / `ResolveOptional` on synthetic wrappers.** `TryResolve<Owned<T>>` for an unregistered `T` threw `ServiceNotRegisteredException`, and `TryResolve<Lazy<T>>` / `TryResolve<Func<T>>` returned true only to fail on use. All three now answer false / null exactly when `T` itself is unresolvable; a genuine construction failure of a registered `T` still propagates. `Func<P, T>` stays always-resolvable.
+
+### Changed
+- **Keyed registrations are invisible to unkeyed resolution.** `Resolve<T>()` no longer returns a `WithKey(...)` registration when it happens to be registered last, `ResolveAll<T>()` / `IEnumerable<T>` no longer include keyed registrations, and `IsRegistered<T>()` (plus `TryResolve` / `ResolveOptional`) answer for unkeyed registrations only. Keyed services stay reachable through `ResolveKeyed`, `TryResolveKeyed`, and `ResolveDictionary`. This matches Microsoft.Extensions.DependencyInjection keyed-service semantics, which the sidecar relies on. An `As(...)` alias of a keyed registration resolves its primary by key.
+
+## [0.3.3] — 2026-10-02
+
+**Sidecar** (`TechTeaStudio.Injector.Extensions.DependencyInjection`). Rebuilt against core 0.5.0.
+
+Sidecar versions 0.3.1 and 0.3.2 were never published to nuget.org (same CI failure as the core), so 0.3.3 is the first published sidecar version after 0.3.0.
+
+### Fixed
+- **Package dependency on a non-existent core version.** The published 0.3.0 declares a dependency on `TechTeaStudio.Injector` 0.3.0, which was never published, so it cannot be installed. The CI pack step passes a global `PackageVersion` that leaked into the referenced core project; both src projects now declare `TreatAsLocalProperty="PackageVersion"` and pin it to their own `<Version>`, so 0.3.3 depends on core 0.5.0.
+
+### Changed
+- Keyed descriptors imported by `PopulateFromServiceCollection` follow MEDI semantics: `GetService(Type)` / `GetServices<T>()` never return a keyed registration and `IsService(Type)` ignores it; `GetKeyedService` / `GetRequiredKeyedService` / `IsKeyedService` are unchanged. (Behaviour comes from the core change above; the adapter itself is unchanged.)
+
 ## [0.4.0] — 2026-05-29
 
 **Core** (`TechTeaStudio.Injector`). Engine hardening, faster resolution, and a richer resolution API.

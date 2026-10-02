@@ -44,15 +44,19 @@
     Package validation catches accidental breaking API changes against the last published
     version. It downloads the baseline package from nuget.org, which can FAIL an offline
     build/pack, so it is gated to CI only ($(GITHUB_ACTIONS) == 'true').
-    Baseline (0.1.0) applies to the CORE package only; the sidecar's first release is 0.3.0
-    and has no prior published baseline.
+    Baseline (0.2.0, the last core version actually on nuget.org) applies to the CORE package
+    only; the sidecar's only published release is 0.3.0 and it carries no baseline, so its
+    validation covers TFM consistency within the package. Members intentionally added to the
+    public interfaces since 0.2.0 are listed in src/TechTeaStudio.Injector/CompatibilitySuppressions.xml
+    (regenerate with -p:ApiCompatGenerateSuppressionFile=true under GITHUB_ACTIONS=true and
+    review that it still contains only additions).
   -->
   <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true' And ('$(MSBuildProjectName)' == 'TechTeaStudio.Injector' Or '$(MSBuildProjectName)' == 'TechTeaStudio.Injector.Extensions.DependencyInjection')">
     <EnablePackageValidation>true</EnablePackageValidation>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true' And '$(MSBuildProjectName)' == 'TechTeaStudio.Injector'">
-    <PackageValidationBaselineVersion>0.1.0</PackageValidationBaselineVersion>
+    <PackageValidationBaselineVersion>0.2.0</PackageValidationBaselineVersion>
   </PropertyGroup>
 
 </Project>

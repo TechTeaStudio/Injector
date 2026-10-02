@@ -1,10 +1,18 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<!-- TreatAsLocalProperty: the CI workflow packs each project with a global /p:PackageVersion read
+     from that project's own Version property (keep exactly one such tag per csproj; the workflow
+     greps for it, so do not spell the tag out in comments). When the sidecar is packed, that global
+     value would otherwise leak into this referenced project and the sidecar's nupkg would depend on
+     a core version that does not exist (sidecar 0.3.0 on nuget.org depends on core 0.3.0 for exactly
+     this reason). Making PackageVersion local pins it to the Version property below, whatever the
+     command line says. -->
+<Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="PackageVersion">
 
   <PropertyGroup>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <RootNamespace>TechTeaStudio.Injector</RootNamespace>
     <AssemblyName>TechTeaStudio.Injector</AssemblyName>
-    <Version>0.4.0</Version>
+    <Version>0.5.0</Version>
+    <PackageVersion>$(Version)</PackageVersion>
 
     <Description>Lightweight, expression-tree-compiled dependency injection container for .NET 8/9/10. From-scratch with no Microsoft.Extensions.DependencyInjection dependency. Open generics, decorators, Lazy/Func/Owned auto-resolution, lifecycle hooks (OnActivating / OnActivated), validate-on-build, async disposal, child scopes with extra registrations, modules, assembly scanning, keyed services, and IEnumerable / IReadOnlyDictionary collection injection.</Description>
     <PackageId>TechTeaStudio.Injector</PackageId>
@@ -28,6 +36,21 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
 
     <PackageReleaseNotes>
+v0.5.0: Release-blocking engine fixes and keyed-service semantics. First version published to nuget.org after 0.2.0 (0.3.0 and 0.4.0 never shipped because CI failed), so it also carries everything listed under v0.4.0 and v0.3.0.
+
+Added:
+  * RegisterDecorator(Type serviceType, Type decoratorType) on IContainerBuilder, so open-generic decorators (IRepository&lt;&gt; -&gt; LoggingRepository&lt;&gt;) are reachable from the public API. An open-generic decorator also wraps closed-only base registrations.
+  * ServiceNotRegisteredException.Key; the keyed-miss message now names the key.
+
+Fixed:
+  * A singleton whose construction throws is retried on the next resolve instead of replaying the cached exception.
+  * Same-thread singleton cycles throw CircularDependencyException (not InvalidOperationException); a cross-thread singleton cycle is detected and reported instead of deadlocking.
+  * ResolveKeyed / TryResolveKeyed find keyed open-generic registrations and keyed registrations added to a child scope via BeginLifetimeScope.
+  * TryResolve / ResolveOptional of Lazy&lt;T&gt;, Func&lt;T&gt;, Owned&lt;T&gt; answer false / null when T is not registered (Owned&lt;T&gt; used to throw; Lazy/Func used to fail later on use).
+
+Changed:
+  * Keyed registrations are no longer the default: Resolve&lt;T&gt;() and IEnumerable&lt;T&gt; / ResolveAll&lt;T&gt;() skip WithKey(...) registrations, and IsRegistered&lt;T&gt;() answers for unkeyed registrations only. Keyed services stay reachable via ResolveKeyed / TryResolveKeyed / ResolveDictionary. This restores Microsoft.Extensions.DependencyInjection keyed-service semantics through the sidecar.
+
 v0.4.0: Engine hardening, faster resolution, and a richer resolution API.
 
 Added:

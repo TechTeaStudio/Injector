@@ -255,6 +255,15 @@ var g = container.Resolve<IGreeter>();
 
 Each decorator activator is built as an `Expression.Lambda<Func<IResolver, object, object>>`, compiled once, cached per registration. Build-time validation rejects a decorator without a matching base registration.
 
+Open-generic decorators use the `Type`-based overload and wrap every closed resolution of the service, whether the base was registered open or closed:
+
+```csharp
+builder.Register(typeof(IRepository<>), typeof(Repository<>));
+builder.RegisterDecorator(typeof(IRepository<>), typeof(LoggingRepository<>));
+
+var users = container.Resolve<IRepository<User>>(); // LoggingRepository<User> around Repository<User>
+```
+
 ### Modules and assembly scanning
 
 ```csharp
@@ -287,11 +296,14 @@ The injection passes run after construction (property first, then method). Witho
 ### Collection resolution
 
 ```csharp
-var all = scope.ResolveAll<IHandler>();                  // every registration of IHandler
+var all = scope.ResolveAll<IHandler>();                  // every unkeyed registration of IHandler
 var byKey = scope.ResolveDictionary<string, IHandler>(); // only the WithKey(...) ones
+var one = scope.ResolveKeyed<IHandler>("alpha");         // a single WithKey(...) registration
 ```
 
 Injectable as constructor parameters too: `IEnumerable<IHandler>`, `IReadOnlyList<IHandler>`, `IReadOnlyDictionary<string, IHandler>`.
+
+Keyed registrations follow Microsoft.Extensions.DependencyInjection semantics: a `WithKey(...)` registration is never the default for `Resolve<T>()`, is not part of `IEnumerable<T>`, and is reachable only through `ResolveKeyed` / `TryResolveKeyed` / `ResolveDictionary`.
 
 ## Public API (selected)
 
@@ -307,6 +319,7 @@ public interface IContainerBuilder
     IRegistrationBuilder Register(Type serviceType);
     IRegistrationBuilder RegisterInstance<TService>(TService instance) where TService : class;
     IContainerBuilder    RegisterDecorator<TService, TDecorator>() where TDecorator : class, TService where TService : class;
+    IContainerBuilder    RegisterDecorator(Type serviceType, Type decoratorType);
     IContainerBuilder    RegisterModule(IModule module);
     IContainerBuilder    RegisterAssembly(Assembly asm, Predicate<Type>? filter = null, Lifetime lifetime = Lifetime.Transient);
     IContainer           Build();
