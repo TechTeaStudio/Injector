@@ -3,10 +3,10 @@
 <Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="PackageVersion">
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <TargetFrameworks>net8.0;net9.0;net10.0;net11.0</TargetFrameworks>
     <RootNamespace>TechTeaStudio.Injector.Extensions.DependencyInjection</RootNamespace>
     <AssemblyName>TechTeaStudio.Injector.Extensions.DependencyInjection</AssemblyName>
-    <Version>0.3.3</Version>
+    <Version>0.3.4</Version>
     <PackageVersion>$(Version)</PackageVersion>
 
     <Description>Microsoft.Extensions.DependencyInjection adapter for TechTeaStudio.Injector. Plugs the Injector container into ASP.NET Core / Generic Host / EF Core via IServiceProvider, IServiceScope, IServiceScopeFactory, IServiceProviderFactory&lt;IContainerBuilder&gt;, IServiceProviderIsService, IServiceProviderIsKeyedService, IKeyedServiceProvider, and an IServiceCollection import helper.</Description>

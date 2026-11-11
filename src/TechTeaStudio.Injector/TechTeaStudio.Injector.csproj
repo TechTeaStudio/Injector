@@ -8,10 +8,10 @@
 <Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="PackageVersion">
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <TargetFrameworks>net8.0;net9.0;net10.0;net11.0</TargetFrameworks>
     <RootNamespace>TechTeaStudio.Injector</RootNamespace>
     <AssemblyName>TechTeaStudio.Injector</AssemblyName>
-    <Version>0.5.0</Version>
+    <Version>0.5.1</Version>
     <PackageVersion>$(Version)</PackageVersion>
 
     <Description>Lightweight, expression-tree-compiled dependency injection container for .NET 8/9/10. From-scratch with no Microsoft.Extensions.DependencyInjection dependency. Open generics, decorators, Lazy/Func/Owned auto-resolution, lifecycle hooks (OnActivating / OnActivated), validate-on-build, async disposal, child scopes with extra registrations, modules, assembly scanning, keyed services, and IEnumerable / IReadOnlyDictionary collection injection.</Description>

@@ -3,6 +3,20 @@
 All notable changes to this project are documented here.
 Format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — 2026-11-11
+
+**Core** (`TechTeaStudio.Injector`).
+
+### Added
+- **`net11.0` target** alongside `net8.0`, `net9.0` and `net10.0`. No API or behaviour change.
+
+## [0.3.4] — 2026-11-11
+
+**Sidecar** (`TechTeaStudio.Injector.Extensions.DependencyInjection`). Rebuilt against core 0.5.1.
+
+### Added
+- **`net11.0` target** alongside `net8.0`, `net9.0` and `net10.0`. No API or behaviour change.
+
 ## [0.5.0] — 2026-10-02
 
 **Core** (`TechTeaStudio.Injector`). Release-blocking engine fixes and keyed-service semantics.

@@ -424,7 +424,7 @@ dotnet build Injector.slnx
 dotnet test  Injector.slnx
 ```
 
-Requires .NET SDK 10. The core library and the sidecar both multi-target `net8.0;net9.0;net10.0`. The sample and the test projects are `net10.0` only. 127 tests pass across the two test projects (82 core + 45 sidecar) with 0 warnings on Release.
+Requires .NET SDK 11. The core library and the sidecar both multi-target `net8.0;net9.0;net10.0;net11.0`. The test projects run on `net10.0` and `net11.0`, the sample is `net10.0` only. 204 tests pass on each of the two frameworks across the two test projects (157 core + 47 sidecar).
 
 ## Versioning &amp; release
 
